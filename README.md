@@ -1,26 +1,8 @@
-# VILPE Sense+ – prototyyppi
+# VILPE Sense+ Kuiva katto -takuu – prototyyppi
 
-Junction X Vaasa Hackathon 2026 · VILPE-haaste *"Unlocking the Value of Building Data"*.
+Junction X Vaasa Hackathon 2026 · VILPE-haaste *"Unlocking the Value of Building Data"* · konsepti v5.
 
-VILPE Sense+ on palvelukerros VILPE Sense -anturien päällä: **Care**-valvontapalvelu isännöitsijöille, varmennettu **Kosteuspassi** ja **Partner API** vakuutusyhtiöille. Tämä repo sisältää klikattavan dashboard-prototyypin.
-
-Salkussa on neljä kohdetta:
-
-| Kohde | Data | Laitekombo |
-|---|---|---|
-| VILPE Express Store, Vantaa | **Oikea** (9/2025–9/2026) | 51 vuotoanturia + 7 huippuimuria |
-| As Oy Vaasan Rantakatu 12 | Simuloitu (12 kk) | 28 vuotoanturia – vuotoepäily |
-| As Oy Hietalahdenkatu 5 | Simuloitu (12 kk) | 3 × MCU-2 + huippuimuri – puhallin seis |
-| As Oy Palosaaren Helmi | Simuloitu (12 kk) | 16 vuotoanturia + 2 huippuimuria – anturi offline |
-
-## Kirjautuminen
-
-Kaikki näkymät ovat yhden demotunnuksen takana:
-
-- Käyttäjätunnus: `VilpeDemo`
-- Salasana: `VilpeDemo`
-
-Kirjautuminen tarkistetaan selaimessa, eli se on demon portti eikä oikea tietoturva. Istunto päättyy, kun välilehti suljetaan tai painetaan *Kirjaudu ulos*.
+> **Maksa kuivasta katosta, älä antureista.** Kiinteistönomistaja ostaa kuivan katon kiinteään hintaan per neliö vuodessa. VILPE tuottaa laitteet ja datan, sertifioitu urakoitsija huoltaa ja korjaa, ja rakenteen sisältä mitattu data tekee kattoriskistä hinnoiteltavan.
 
 ## Käynnistys
 
@@ -30,60 +12,51 @@ Ei riippuvuuksia eikä build-vaihetta. Avaa `app/index.html` selaimessa tai käy
 node scripts/serve.js
 ```
 
-→ http://localhost:8765
+→ http://localhost:8765 · kirjautuminen: `VilpeDemo` / `VilpeDemo` (selaimessa tarkistettava demoportti, ei oikea tietoturva).
 
-## Maaprofiilit ja kielet
-
-Konseptin luvun 13.2 mukaisesti sama palvelu toimii kaikissa VILPEn maissa. Headerin **maavalitsin** vaihtaa maaprofiilin ja **FI/EN**-painike kielen. Data pysyy samana, mutta seuraavat asiat vaihtuvat:
-
-| Vaihtuu | Esimerkki (FI → UK → US) |
-|---|---|
-| Roolitermit | isännöitsijä → managing agent → property / facility manager |
-| Yksiköt | °C / m² → °C / m² → °F / ft² |
-| Valuutta ja hintakerroin | € × 1,0 → £ × 1,1 → $ × 1,3 |
-| Kosteuspassin säädöskytkentä | EPBD 2024 -remonttipassi → Awaab's Law & golden thread → roof asset report |
-| Säädatan lähde | Ilmatieteen laitos → globaali lähde (Copernicus / Open-Meteo) |
-| Kumppaniurakoitsijat | maakohtaiset (kuvitteellisia) |
-
-Profiilit: Suomi, Ruotsi, Viro, Latvia, Liettua, Puola, Iso-Britannia ja USA (`app/i18n.js`). Suomen profiilin oletuskieli on suomi, muiden englanti; kielen voi vaihtaa vapaasti. Liiketoiminta-näkymä näyttää valitun maan roolimallin ja laajenemisjärjestyksen. Valinta tallentuu selaimeen.
-
-## Näkymät
+## Näkymät (konsepti luku 19.1)
 
 | Näkymä | Mitä näyttää |
 |---|---|
-| **Salkku** | Kohteet Health Scoren mukaan järjestettynä. **Lisää kohde** (nimi, rakenne, laitekombo → 12 kk simuloitu data) ja **Poista** kohde |
-| **Kohde** | Kosteuskartta (päiväliukusäädin + toisto), toimenpidelista, huippuimurien tila ja aikasarjat, kuivumiskäyrä |
-| **Työtilaus** | Yhden klikkauksen tilaus kumppaniurakoitsijalle → "Merkitse korjatuksi" → Health Score päivittyy |
-| **Kosteuspassi** | Luokka A–E, havainnot, kuivumiskäyrä, mittauskattavuus, QR-varmennus, tulostus/PDF |
-| **Vakuutusnäkymä** | Suostumus (peruttavissa), riskiluokka, alennusperuste, toimenpidehistoria, Health Score -erittely |
-| **Hallitusraportti** | Yhden sivun vuosikooste yhtiökokoukseen |
-| **Liiketoiminta** | Elinkaari, paketit maan hinnoilla, maaprofiili (roolit, säädöskytkentä), laajenemisjärjestys, kustannuslaskuri, VILPEn tuloskenaario, VILPEn hinnasto 2025 ja Vantaan laitteistolaskelma |
+| **Takuusalkku** | Kohteet, m², riskiluokka A–E, takuumaksu €/v ja avoimet havainnot. Kohteen lisäys (m², rakenne, laitekombo) ja poisto |
+| **Takuukohde** | Löydökset kattokartalla (kosteus-, lämpö- ja tuuletuspoikkeamat), havainnot ja työtilaukset, rakenneosien riskiluokat, sopimustiedot, korjausrahaston saldo, AH rakenne vs. ulkoilma |
+| **Työtilaus** | Urakoitsijalle kartan ja datan kanssa, "hoidetaan takuun puitteissa, 0 € omistajalle", kustannus korjausrahastosta |
+| **Vuosipassi** | Riskiluokka, kuivuminen (AH-vertailu), lämpöpoikkeamat, tuuletuksen hyöty, korjaukset, "takuu siirrettävissä", QR-varmennus |
+| **Vakuuttaja** | Riskiluokkajakauma m²:n mukaan, korjauskulut vs. rahasto, omistajan suostumus kohteittain |
+| **Hinnoittelu** | Asiakaspolku, laskuri (m² + riskiluokka → €/v ja maksun jako), tulovirrat, skenaario, VILPEn hinnasto 2025, maaprofiili |
 
-Kohdekohtaisissa näkymissä on kohdevalitsin. Demon tila (tilaukset, korjaukset, suostumukset, lisätyt ja poistetut kohteet) tallentuu selaimen localStorageen. Footerin **Nollaa demo** palauttaa alkutilan.
+## Kohteet
 
-## Hinnat
+| Kohde | Data | Laitteet | Löydös |
+|---|---|---|---|
+| VILPE Express Store, Vantaa (~1 000 m², pilotti) | **Oikea** 9/2025–9/2026 | 51 vuotoanturia + 7 huippuimuria | Löydökset 1–5 |
+| Logistiikkahalli Vaasa (4 000 m²) | Simuloitu 12 kk | 200 vuotoanturia | Kosteuspoikkeama (vuotoepäily) |
+| Varastohalli Mustasaari (2 500 m²) | Simuloitu 12 kk | 3 × MCU-2 + huippuimuri | Puhallin seis 21 vrk |
+| Tuotantohalli Kokkola (3 200 m²) | Simuloitu 12 kk | 160 vuotoanturia + 2 huippuimuria | Anturi offline |
 
-Laitteiston hinnat lasketaan VILPEn hinnastosta 2025 (alv 0 %): vuotopaikannin 10 kpl 580 € (735045), mobiilitukiasema 695 € (735044), Sense-paketti MCU-2 + 2 anturia 1 115 € (735040), lisäanturi 181,50 € (735041) ja ECo Sense -huippuimuri 522 € (741982). Anturit myydään 10 kpl paketteina, ja yksi tukiasema riittää 200 anturille ja 50 ohjausyksikölle. Laitteisto palveluna = (laitteisto + Croco-kiinnikkeet ja asennus ~1 000 €) / 120 kk × 1,05 + Care Pro 30 €/kk. Esimerkiksi 800 m² ja 30 asuntoa → ~65 €/kk ≈ 2,17 €/asunto. Muissa maissa laitteisto muunnetaan valuuttakurssilla ja palvelu maakertoimella.
+Footerin **Nollaa demo** palauttaa alkutilan. Maavalitsin (FI, SE, EE, LV, LT, PL, UK, US) vaihtaa roolitermit, yksiköt, valuutan ja takuun kytkennän; kielet suomi ja englanti.
 
-## Analytiikka (sääntöpohjainen MVP)
+## Analytiikka (konsepti luku 15.3)
 
-Lasketaan selaimessa `app/app.js`:ssä:
-
-- **Laitevalvonta:** puhallin seis (rpm = 0) yli 48 h → hälytys. Pakkaspäiviä (ulko < −5 °C) ei lasketa, koska seisokki on silloin todennäköisesti pakkassuojaus. Lisäksi lasketaan päivät, jolloin sisä-AH > ulko-AH eli tuuletus olisi kannattanut.
-- **Offline:** anturilta ei mittausta yli 36 h (normaalisti 2 × vrk).
-- **Naapurivertailu:** anturin RH > 6 lähimmän naapurin mediaani + max(3σ, 10 %-yks.) tai T < mediaani − 4 °C. Liputetaan anturit, joilla poikkeamapäiviä ≥ ~7 % seurantajaksosta.
-- **Roof Health Score:** 100 − homeriski (30) − aika yli RH-rajan (25) − laiteviat (25) − avoimet poikkeamat (20). Avoin havainto pitää liikennevalon vähintään keltaisena.
+- **Puhallin seis:** rpm = 0 > 48 h ja tuuletus kannattaisi; pakkasjaksot (ulko < −5 °C) eivät ole vika.
+- **Anturi offline:** ei mittausta > 36 h.
+- **Poikkeava anturi:** RH > 6 lähimmän naapurin mediaani + 3σ (väh. 10 %-yks.).
+- **Lämpöpoikkeama:** talvella `T_anturi = a + b · T_ulko`; poikkeama, jos `b > mediaani + 2σ` tai anturi > 2 °C muita kylmempi.
+- **Tuuletuksen hyöty:** osuus käyntitunneista, joina `AH_sisä > AH_ulko` (kesä 18.6.–10.9.); tarkistus, jos alle 50 % ja rakenne-RH > 95 % yli puolet ajasta.
+- **Kuivuminen:** `Δ(AH_sisä − AH_ulko)` samana vuodenaikana vuodesta toiseen ≈ 0.
+- **Riskiluokka:** 100 − homeriski (25) − aika yli RH-rajan (20) − laiteviat (20) − lämpöpoikkeamat (15) − avoimet havainnot (20) → A ≥ 90, B ≥ 75, C ≥ 60, D ≥ 40, E < 40. Avoin laitevika tai vuotoepäily estää A-luokan.
+- **Takuumaksu [H]:** A 1,2 · B 1,5 · C 1,8 · D 2,0 €/m²/v (D: korjaukset ensin, E ei kelpaa). Jako: laitteisto 0,50 + palvelu 0,40 (VILPE), urakoitsija 0,35, korjausrahasto 0,25 €/m²/v. Korjauskulut arvioidaan havaintotyypin mukaan.
 
 ## Data
 
-Simuloitu data tuotetaan selaimessa (`app/sim.js`, siemennetty satunnaisuus → sama kohde näyttää aina samalta). Vantaan `app/data.js` ja `app/assets/roof.jpg` generoidaan hackathon-aineistosta:
+`app/data.js` ja `app/assets/roof.jpg` generoidaan hackathon-aineistosta (sisältää myös tuntitason tuuletustilastot löydökseen 2):
 
 ```bash
 pip install openpyxl pymupdf pillow
 python scripts/build_data.py ../Vilpe_Materiaalit
 ```
 
-Skripti lukee `measurements_*.xlsx` (vuotoanturit), `VILPE Vantaa, *.xlsx` (MCU-2-yksiköt) ja `site_layout_*.pdf` (kattokartta ja anturien sijainnit).
+`scripts/analyysi/` sisältää konseptin löydösten 2–4 alkuperäiset analyysiskriptit (pandas). Simuloidut kohteet tuotetaan selaimessa (`app/sim.js`, siemennetty satunnaisuus).
 
 ## Rakenne
 
@@ -91,14 +64,15 @@ Skripti lukee `measurements_*.xlsx` (vuotoanturit), `VILPE Vantaa, *.xlsx` (MCU-
 app/
   index.html      kehys ja navigaatio
   styles.css      VILPE-ilme (vilpe_design.md)
+  app.js          näkymät, analytiikka, riskiluokka, takuun talous, kirjautuminen
+  i18n.js         maaprofiilit ja kielet
+  sim.js          simuloidut hallit
   charts.js       riippuvuukseton SVG-aikasarjakaavio
-  app.js          näkymät, analytiikka, kirjautuminen ja demon tila
-  sim.js          simuloidut kohteet
-  i18n.js         maaprofiilit, kielet, yksiköt ja valuutat
   data.js         Vantaan generoitu data
   assets/         logo ja kattokartta
   vendor/         qrcode-generator (MIT)
 scripts/
   build_data.py   datan muunnos
+  analyysi/       löydösten 2–4 analyysiskriptit
   serve.js        staattinen palvelin
 ```

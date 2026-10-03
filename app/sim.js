@@ -65,7 +65,7 @@
   }
 
   /**
-   * cfg: { id, name, city, type, sensors, units, apartments, events?: { leak?: {sensor, from}, offline?: {sensor, days}, fanStop?: {unit, from} } }
+   * cfg: { id, name, city, type, m2, sensors, units, events?: { leak?: {sensor, from}, offline?: {sensor, days}, fanStop?: {unit, from} } }
    */
   function simulate(cfg) {
     const rand = rng(cfg.seed || cfg.id);
@@ -91,11 +91,13 @@
       let leak = 0;
       const rh = [];
       const t = [];
+      const ahs = [];
       days.forEach((_, i) => {
-        if (ev.offline && ev.offline.sensor === k && i >= n - ev.offline.days) { rh.push(null); t.push(null); return; }
+        if (ev.offline && ev.offline.sensor === k && i >= n - ev.offline.days) { rh.push(null); t.push(null); ahs.push(null); return; }
         if (ev.leak && ev.leak.sensor === k && i >= ev.leak.from) leak = clamp(leak * 0.9 + (rain[i] ? 9 + rand() * 6 : 0), 0, 48);
         rh.push(r1(clamp(base + 9 * season(i, 225) + (rain[i] ? 1.5 : 0) + leak + noise(1.6), 15, 99)));
         t.push(r1(tOut[i] * 0.45 + 10.5 + tBias + noise(0.6) - (leak ? 1.2 : 0)));
+        ahs.push(ah(t[i], rh[i]));
       });
       const valid = rh.map((v, i) => [v, t[i], i]).filter(([v]) => v !== null);
       const [lv, lt, li] = valid[valid.length - 1];
@@ -104,6 +106,7 @@
         pos,
         rh,
         t,
+        ah: ahs,
         rhMean: r1(avg(rh)),
         rhMax: r1(Math.max(...valid.map((x) => x[0]))),
         tMin: r1(Math.min(...valid.map((x) => x[1]))),
@@ -133,11 +136,22 @@
         const rpm = stopped ? 0 : Math.round((on / 100) * (1100 + rand() * 600));
         return { d, rpm, on, tIn, rhIn, ahIn, tOut: tOut[i], rhOut: rhOut[i], ahOut: ahO };
       });
+      // Käyntitunnit ja tunnit, joina ulkoilma oli kosteampaa (vrk-tason arvio)
+      const vent = (rs) => {
+        const hOn = rs.reduce((a, x) => a + (x.on / 100) * 24, 0);
+        const hWet = rs.reduce((a, x) => a + (x.ahIn < x.ahOut ? (x.on / 100) * 24 : 0), 0);
+        return { hOn: Math.round(hOn), hWet: Math.round(hWet), rh95: Math.round((100 * rs.filter((x) => x.rhIn > 95).length) / rs.length), dAH: Math.round(avg(rs.map((x) => x.ahIn - x.ahOut)) * 100) / 100 };
+      };
       const months = [...new Set(days.map((d) => d.slice(0, 7)))].map((m) => {
         const rs = dd.filter((x) => x.d.startsWith(m));
         const o = { m };
         ["rpm", "on", "tIn", "rhIn", "ahIn", "tOut", "rhOut", "ahOut"].forEach((key) => { o[key] = r1(avg(rs.map((x) => x[key]))); });
-        return o;
+        return { ...o, ...vent(rs) };
+      });
+      const summer = {};
+      [...new Set(days.map((d) => d.slice(0, 4)))].forEach((y) => {
+        const rs = dd.filter((x) => x.d >= `${y}-06-18` && x.d <= `${y}-09-10`);
+        if (rs.length > 60) summer[y] = vent(rs);
       });
       // Pisin yhtäjaksoinen seisokki
       let best = [0, null, null];
@@ -162,6 +176,9 @@
         stopTo: best[2],
         days: dd,
         months,
+        summer,
+        rpmDry: Math.round(avg(dd.filter((x) => x.rpm > 0 && x.ahIn >= x.ahOut).map((x) => x.rpm)) || 0),
+        rpmWet: Math.round(avg(dd.filter((x) => x.rpm > 0 && x.ahIn < x.ahOut).map((x) => x.rpm)) || 0),
       };
     });
 
@@ -189,58 +206,57 @@
       name: cfg.name,
       city: cfg.city,
       type: cfg.type,
-      apartments: cfg.apartments || null,
+      m2: cfg.m2 || Math.max(200, cfg.sensors * 20),
       built: cfg.built || "",
       builtEn: cfg.builtEn || cfg.built || "",
       days,
       sensors,
       units,
       networkMonthly,
+      outdoor: { t: tOut, ah: days.map((_, i) => ah(tOut[i], rhOut[i])) },
       roof: { w: W, h: H, src: roofSvg(cfg.type, W, H) },
-      events: (cfg.storyEvents || []).map((e) => ({ ...e, d: e.d || days[0] })),
     };
   }
 
-  // Kolme demotaloyhtiötä eri tuotekomboilla
+  // Kolme demohallia eri tuotekomboilla (v5: suuren tasakaton omistaja)
   const PRESETS = [
     {
-      id: "rantakatu",
-      name: "As Oy Vaasan Rantakatu 12",
+      id: "logistiikka",
+      name: "Logistiikkahalli Vaasa",
       city: "Vaasa",
       type: "Tasakatto",
-      built: "1978, katto uusittu 2019",
-      builtEn: "1978, roof renewed 2019",
-      apartments: 30,
-      sensors: 28,
+      built: "2009, kermikate uusittu 2021",
+      builtEn: "2009, membrane renewed 2021",
+      m2: 4000,
+      sensors: 200,
       units: 0,
-      events: { leak: { sensor: 17, from: SIM_DAYS - 34 } },
-      storyEvents: [{ d: null, cls: "info", t: "Sense-vuotopaikannin (28 × RHT-2) liitetty Sense+ Careen", tEn: "Sense leak detection (28 × RHT-2) connected to Sense+ Care" }],
+      events: { leak: { sensor: 127, from: SIM_DAYS - 34 } },
     },
     {
-      id: "hietalahdenkatu",
-      name: "As Oy Hietalahdenkatu 5",
-      city: "Vaasa",
+      id: "varasto",
+      name: "Varastohalli Mustasaari",
+      city: "Mustasaari",
       type: "Aluskatteeton peltikatto",
-      built: "1962",
-      apartments: 18,
+      built: "1988",
+      builtEn: "1988",
+      m2: 2500,
       sensors: 0,
       units: 3,
       unitNames: ["Ullakko A", "Ullakko B", "Ullakko C"],
       events: { fanStop: { unit: 1, from: SIM_DAYS - 21 } },
-      storyEvents: [{ d: null, cls: "info", t: "Kosteudenhallinta (3 × MCU-2 + EC-huippuimuri) liitetty Sense+ Careen", tEn: "Humidity control (3 × MCU-2 + EC roof fan) connected to Sense+ Care" }],
     },
     {
-      id: "palosaari",
-      name: "As Oy Palosaaren Helmi",
-      city: "Vaasa",
+      id: "tuotanto",
+      name: "Tuotantohalli Kokkola",
+      city: "Kokkola",
       type: "Viherkatto",
       built: "2024",
-      apartments: 24,
-      sensors: 16,
+      builtEn: "2024",
+      m2: 3200,
+      sensors: 160,
       units: 2,
       unitNames: ["Viherkatto itä", "Viherkatto länsi"],
-      events: { offline: { sensor: 5, days: 4 } },
-      storyEvents: [{ d: null, cls: "info", t: "Vuotoanturit (16 × RHT-2) ja 2 × MCU-2 liitetty Sense+ Careen", tEn: "Leak sensors (16 × RHT-2) and 2 × MCU-2 connected to Sense+ Care" }],
+      events: { offline: { sensor: 41, days: 4 } },
     },
   ];
 

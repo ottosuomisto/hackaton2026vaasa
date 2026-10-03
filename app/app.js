@@ -1,8 +1,7 @@
-/* VILPE Sense+ – klikattava prototyyppi.
-   Kohteet: VILPE Express Store Vantaa (oikea data, data.js) + simuloidut taloyhtiöt (sim.js).
-   Analytiikka (laitevalvonta, naapurivertailu, offline-tunnistus, Health Score)
-   lasketaan selaimessa jokaiselle kohteelle samoilla säännöillä.
-   Maaprofiili ja kieli (i18n.js) vaihtavat termit, yksiköt, valuutan ja säädöskytkennän. */
+/* VILPE Sense+ Kuiva katto -takuu – klikattava prototyyppi (konsepti v5).
+   Kohteet: VILPE Express Store Vantaa (oikea data, data.js) + simuloidut hallit (sim.js).
+   Analytiikka (laitevalvonta, naapurivertailu, lämpöpoikkeamat, tuuletuksen hyöty,
+   kuivuminen, riskiluokka A–E) lasketaan selaimessa samoilla säännöillä kaikille kohteille. */
 (function () {
   "use strict";
 
@@ -15,8 +14,8 @@
   // ---------- Apurit ----------
   const n1 = (v) => (v === null || v === undefined ? "–" : v.toLocaleString(I.locale(), { maximumFractionDigits: 1 }));
   const n0 = (v) => (v === null || v === undefined ? "–" : Math.round(v).toLocaleString(I.locale()));
-  const nd = (v, d) => v.toLocaleString(I.locale(), { maximumFractionDigits: d });
-  const pct = (v) => (v > 99.9 && v < 100 ? n1(99.9) : n1(v));
+  const nd = (v, d) => (v === null || v === undefined ? "–" : v.toLocaleString(I.locale(), { maximumFractionDigits: d, minimumFractionDigits: 0 }));
+  const nf = (v, d) => v.toLocaleString(I.locale(), { maximumFractionDigits: d, minimumFractionDigits: d });
   const parseDay = (s) => new Date(`${s}T12:00:00`);
   const fdate = (s) => I.date(s);
   const month = (s) => I.month(s);
@@ -27,10 +26,14 @@
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const tmp = (c) => `${n1(I.temp(c))} ${I.tempUnit()}`;
   const tmpDelta = (c) => `${n1(I.tempDelta(c))} ${I.tempUnit()}`;
+  const area = (m2) => `${n0(I.area(m2))} ${I.areaUnit()}`;
+  const perArea = (eur) => `${I.money(I.perArea(eur), 2)}/${I.areaUnit()}`;
   const today = new Date();
   const TODAY_ISO = today.toISOString().slice(0, 10);
   const addDays = (iso, n) => new Date(parseDay(iso).getTime() + n * 864e5).toISOString().slice(0, 10);
   const plural = (n, one, many) => (n === 1 ? one : many);
+  const yr = () => L("v", "yr");
+  const zero = () => I.money(0);
 
   // Näyttönimet (data pitää suomenkieliset avaimet)
   const UNIT_EN = {
@@ -78,30 +81,36 @@
   const scaleCss = (s) => `linear-gradient(90deg, ${s.stops.map(([v, c]) => `${c} ${((v - s.min) / (s.max - s.min)) * 100}%`).join(", ")})`;
   const scaleLabel = (key) => (key === "rh" ? `${L("Suhteellinen kosteus", "Relative humidity")} 20…92 %` : `${L("Lämpötila", "Temperature")} ${n0(I.temp(-5))}…${n0(I.temp(25))} ${I.tempUnit()}`);
 
-  // ---------- VILPEn hinnasto 2025 (alv 0 %, konsepti luku 3.3) ----------
+  // ---------- Hinnasto ja takuun hinnoittelu (konsepti luvut 3.3, 10 ja 11) ----------
   const PRICE_LIST = {
-    leakPack: { no: "735045", eur: 580, fi: "VILPE Sense -vuotopaikannin, 10 kpl (RHT-2)", en: "VILPE Sense leak detector, 10 pcs (RHT-2)" },
-    ccu: { no: "735044", eur: 695, fi: "VILPE Sense -mobiilitukiasema (CCU)", en: "VILPE Sense mobile base station (CCU)" },
-    mcuPack: { no: "735040", eur: 1115, fi: "VILPE Sense -paketti (MCU-2 + 2 anturia)", en: "VILPE Sense package (MCU-2 + 2 sensors)" },
-    extraSensor: { no: "735041", eur: 181.5, fi: "VILPE Sense -lisäanturi (kosteudenhallinta)", en: "VILPE Sense extra sensor (humidity control)" },
-    fan: { no: "741982", eur: 522, fi: "VILPE ECo Sense -huippuimuri", en: "VILPE ECo Sense roof fan" },
+    leakPack: { no: "735045", eur: 580, fi: "Vuotopaikannin 10 kpl (RHT-2)", en: "Leak detector, 10 pcs (RHT-2)" },
+    ccu: { no: "735044", eur: 695, fi: "Mobiilitukiasema (CCU)", en: "Mobile base station (CCU)" },
+    mcuPack: { no: "735040", eur: 1115, fi: "Sense-paketti (MCU-2 + 2 anturia)", en: "Sense package (MCU-2 + 2 sensors)" },
+    extraSensor: { no: "735041", eur: 181.5, fi: "Lisäanturi (kosteudenhallinta)", en: "Extra sensor (humidity control)" },
+    fan: { no: "741982", eur: 522, fi: "ECo Sense -huippuimuri", en: "ECo Sense roof fan" },
   };
-  const INSTALL_EUR = 1000; // Croco-kiinnikkeet ja asennus, arvio
-  const CARE_PRO_EUR = 30; // Care Pro €/kk HaaS-paketissa
   // Laitteisto hinnaston mukaan: anturit 10 kpl paketteina, yksi tukiasema per 200 anturia / 50 MCU-2
-  function hardware(sensors, units) {
+  function hardware(sensors, units, m2) {
     const packs = Math.ceil(sensors / 10);
     const ccus = sensors + units ? Math.max(1, Math.ceil(sensors / 200), Math.ceil(units / 50)) : 0;
-    const leak = packs * PRICE_LIST.leakPack.eur + ccus * PRICE_LIST.ccu.eur;
-    const humidity = units * (PRICE_LIST.mcuPack.eur + PRICE_LIST.fan.eur);
-    const total = leak + humidity;
-    // Laitteisto palveluna: 10 v kuoletus + marginaali, Care Pro päälle
-    const haas = ((total + INSTALL_EUR) / 120) * 1.05;
-    return { packs, ccus, leak, humidity, total, haas };
+    const list = packs * PRICE_LIST.leakPack.eur + ccus * PRICE_LIST.ccu.eur + units * (PRICE_LIST.mcuPack.eur + PRICE_LIST.fan.eur);
+    const install = Math.max(1000, m2 * 0.4); // asennus [H]
+    return { packs, ccus, list, install, total: list + install };
   }
+  // Takuumaksu riskiluokan mukaan, €/m²/v [H]. D vaatii korjaukset ennen takuuta, E ei kelpaa.
+  const CLASS_PRICE = { A: 1.2, B: 1.5, C: 1.8, D: 2.0, E: null };
+  // Maksun jako 1,5 €/m²/v -esimerkissä; muilla hinnoilla samassa suhteessa
+  const SPLIT = [
+    { key: "hw", eur: 0.5, fi: "Laitteisto palveluna (VILPE)", en: "Hardware as a service (VILPE)", color: "#01273E" },
+    { key: "svc", eur: 0.4, fi: "Analytiikka, alusta, vuosipassi (VILPE)", en: "Analytics, platform, annual passport (VILPE)", color: "#1A62A9" },
+    { key: "con", eur: 0.35, fi: "Vuositarkastus ja ennakkohuolto (urakoitsija)", en: "Annual inspection and preventive care (contractor)", color: "#E3530F" },
+    { key: "fund", eur: 0.25, fi: "Korjausrahasto", en: "Repair fund", color: "#3ADB76" },
+  ];
+  const splitOf = (price) => SPLIT.map((s) => ({ ...s, value: (s.eur / 1.5) * price }));
+  const REPAIR_CAP = 10000; // korjausten enimmäismäärä €/kohde/v [H]
 
   // ---------- Tila (demon kulku) ----------
-  const STORE = "vilpe-senseplus-demo-v2";
+  const STORE = "vilpe-senseplus-demo-v5";
   const fresh = () => ({ findings: {}, consent: {}, orders: 0, removed: [], custom: [], current: "vantaa" });
   let state = fresh();
   try { state = Object.assign(fresh(), JSON.parse(localStorage.getItem(STORE)) || {}); } catch (e) { /* esim. yksityinen ikkuna */ }
@@ -121,22 +130,26 @@
     ...V,
     id: "vantaa",
     real: true,
-    newBuild: true,
+    pilot: true,
     name: V.site.name,
     city: "Vantaa",
     type: "Liikekiinteistö · tasa- ja viherkatto",
     typeEn: "Commercial · flat and green roof",
     structureFi: V.site.structure,
     structureEn: "Concrete · flat roof + green roof + crawl space",
-    apartments: null,
+    m2: 1000,
+    contractStart: TODAY_ISO,
     roof: { ...V.roof, src: "assets/roof.jpg" },
-    events: [{ d: "2025-05-13", cls: "info", t: "Katto ja ryömintätilainen alapohja valmistuneet, Sense-seuranta alkaa (7 imuria, 51 anturia)", tEn: "Roof and crawl space completed, Sense monitoring starts (7 roof fans, 51 sensors)" }],
   };
   const siteType = (s) => (s.typeEn ? L(s.type, s.typeEn) : typeLabel(s.type));
   const siteStructure = (s) => (s.structureFi ? L(s.structureFi, s.structureEn) : `${typeLabel(s.type)}${s.built ? ` · ${L(s.built, s.builtEn)}` : ""}`);
   const siteCache = new Map([["vantaa", VANTAA]]);
   const siteFor = (cfg) => {
-    if (!siteCache.has(cfg.id)) siteCache.set(cfg.id, window.SenseSim.simulate(cfg));
+    if (!siteCache.has(cfg.id)) {
+      const s = window.SenseSim.simulate(cfg);
+      s.contractStart = cfg.custom ? TODAY_ISO : s.days[0];
+      siteCache.set(cfg.id, s);
+    }
     return siteCache.get(cfg.id);
   };
   function allSites() {
@@ -148,7 +161,7 @@
     return list.find((s) => s.id === state.current) || list[0] || null;
   }
 
-  // ---------- Analytiikkakerros ----------
+  // ---------- Analytiikkamoottori (konsepti luku 15.3) ----------
   const analysisCache = new Map();
   function analyze(site) {
     if (analysisCache.has(site.id)) return analysisCache.get(site.id);
@@ -157,7 +170,16 @@
     const units = site.units;
     const sensors = site.sensors;
 
-    // Naapurivertailu: 6 lähintä anturia kattokartalla
+    // Ulkoilma vuorokausittain: simuloiduilla oma sarja, Vantaalla MCU-2-ulkoanturien keskiarvo
+    const outdoor = site.outdoor || (() => {
+      const byDay = units.map((u) => Object.fromEntries(u.days.map((d) => [d.d, d])));
+      return {
+        t: days.map((d) => avg(byDay.map((m) => (m[d] ? m[d].tOut : null)))),
+        ah: days.map((d) => avg(byDay.map((m) => (m[d] ? m[d].ahOut : null)))),
+      };
+    })();
+
+    // Poikkeava anturi: RH > 6 lähimmän naapurin mediaani + 3σ (väh. 10 %-yks.)
     sensors.forEach((s) => {
       s.neighbors = sensors
         .filter((o) => o !== s)
@@ -167,29 +189,49 @@
         .map(([o]) => o);
       s.nbMedian = days.map((_, i) => { const v = s.neighbors.map((o) => o.rh[i]).filter((x) => x !== null); return v.length ? median(v) : null; });
       let rhDays = 0;
-      let tDays = 0;
       days.forEach((_, i) => {
         const rhN = s.neighbors.map((o) => o.rh[i]).filter((x) => x !== null);
-        const tN = s.neighbors.map((o) => o.t[i]).filter((x) => x !== null);
         if (s.rh[i] !== null && rhN.length >= 3 && s.rh[i] - median(rhN) > Math.max(3 * sd(rhN), 10)) rhDays++;
-        if (s.t[i] !== null && tN.length >= 3 && median(tN) - s.t[i] > 4) tDays++;
       });
-      s.anomalyDays = rhDays + tDays;
-      s.rhAnomalyDays = rhDays;
-      s.tAnomalyDays = tDays;
+      s.anomalyDays = rhDays;
     });
     const anomalyMin = Math.max(5, Math.round(days.length * 0.068));
     const anomalies = sensors.filter((s) => s.anomalyDays >= anomalyMin).sort((a, b) => b.anomalyDays - a.anomalyDays);
     const others = sensors.filter((s) => !anomalies.includes(s));
 
-    // Offline: ei mittausta > 36 h (anturit lähettävät 2 × vrk)
+    // Lämpöpoikkeama: talvella T_anturi = a + b · T_ulko; poikkeama, jos b > mediaani + 2σ tai anturi selvästi muita kylmempi
+    const winter = days.map((d, i) => [d, i]).filter(([d]) => /-(12|01|02)-/.test(d)).map(([, i]) => i);
+    const fits = [];
+    sensors.forEach((s) => {
+      const pts = winter.filter((i) => s.t[i] !== null && outdoor.t[i] !== null).map((i) => [outdoor.t[i], s.t[i]]);
+      if (pts.length < 30) return;
+      const mx = avg(pts.map((p) => p[0]));
+      const my = avg(pts.map((p) => p[1]));
+      const b = pts.reduce((a, p) => a + (p[0] - mx) * (p[1] - my), 0) / pts.reduce((a, p) => a + (p[0] - mx) ** 2, 0);
+      s.coupling = b;
+      fits.push({ s, b, mean: my, n: pts.length });
+    });
+    let thermal = [];
+    let thermalStats = null;
+    if (fits.length >= 5) {
+      const mb = median(fits.map((f) => f.b));
+      const sb = sd(fits.map((f) => f.b));
+      const mm = median(fits.map((f) => f.mean));
+      thermalStats = { median: mb, sd: sb, meanT: mm, n: Math.round(median(fits.map((f) => f.n))) };
+      thermal = fits
+        .filter((f) => (f.b > mb + 2 * sb && f.b - mb > 0.1) || f.mean < mm - 2)
+        .map((f) => ({ ...f, kind: f.b > mb + 2 * sb && f.b - mb > 0.1 ? "coupling" : "cold" }))
+        .sort((a, b) => b.b - a.b);
+    }
+
+    // Anturi offline: ei mittausta > 36 h
     const newest = Math.max(...sensors.map((s) => new Date(s.last.ts).getTime()), 0);
     const offline = sensors.filter((s) => newest - new Date(s.last.ts).getTime() > 36 * 3600e3).map((s) => {
       s.offlineDays = Math.max(1, Math.round((newest - new Date(s.last.ts).getTime()) / 864e5));
       return s;
     });
 
-    // Laitevalvonta: puhallin seis ≥ 48 h, pakkassuojaus (ulko < −5 °C) ei ole vika
+    // Puhallin seis: rpm = 0 > 48 h ja tuuletus kannattaisi (pakkasjaksot eivät ole vika)
     const stopped = units.filter((u) => {
       if (!u.stopFrom || u.stopDays < 2) return false;
       const inStop = u.days.filter((d) => d.d >= u.stopFrom && d.d <= u.stopTo && d.rpm === 0);
@@ -205,54 +247,66 @@
       u.ongoing = u.stopTo === days[lastIdx];
     });
 
+    // Tuuletuksen hyöty: osuus käyntitunneista, joina AH_sisä > AH_ulko.
+    // Tarkistus, jos kesällä < 50 % ja rakenne on silti märkä (RH > 95 % yli puolet ajasta).
+    units.forEach((u) => {
+      const ys = Object.keys(u.summer || {}).filter((y) => u.summer[y].hOn > 100).sort();
+      u.ventYears = ys.map((y) => ({ y, benefit: 100 * (1 - u.summer[y].hWet / u.summer[y].hOn), wet: 100 * (u.summer[y].hWet / u.summer[y].hOn), rh95: u.summer[y].rh95, dAH: u.summer[y].dAH }));
+      u.ventFlag = !stopped.includes(u) && u.ventYears.length > 0 && u.ventYears.every((v) => v.benefit < 50 && v.rh95 > 50);
+      // Kuivuminen valmis: Δ(AH_sisä − AH_ulko) samana vuodenaikana vuodesta toiseen ≈ 0
+      const allYears = Object.keys(u.summer || {}).sort();
+      u.dryDelta = allYears.length >= 2 ? u.summer[allYears[allYears.length - 1]].dAH - u.summer[allYears[0]].dAH : null;
+    });
+    const ventFlagged = units.filter((u) => u.ventFlag);
+
+    // Kuivuminen (vuotoanturit): ensimmäiset vs. viimeiset 11 vrk, kun jakso kattaa vuoden → sama vuodenaika
+    let drying = null;
+    if (sensors.length && days.length >= 330) {
+      const win = (from, to) => ({ ah: avg(sensors.flatMap((s) => s.ah.slice(from, to))), out: avg(outdoor.ah.slice(from, to)) });
+      const a = win(0, 11);
+      const b = win(days.length - 11, days.length);
+      if (a.ah !== null && a.out !== null && b.ah !== null && b.out !== null) {
+        drying = { a, b, dIn: b.ah - a.ah, dOut: b.out - a.out };
+        drying.gap = drying.dIn - drying.dOut;
+      }
+    }
+
     const molds = units.map((u) => u.mold);
     const maxMold = molds.length ? Math.max(...molds) : null;
     const riskUnit = units.length ? units.reduce((a, b) => (b.mold > a.mold ? b : a)) : null;
-    const monthly = site.networkMonthly;
-    const firstMonth = monthly[0];
-    const driest = monthly.reduce((a, b) => (b.rh < a.rh ? b : a));
-    const wettest = monthly.reduce((a, b) => (b.rh > a.rh ? b : a));
-    const lastMonth = monthly[monthly.length - 1];
-    const rhNow = sensors.length ? avg(sensors.filter((s) => !offline.includes(s)).map((s) => s.last.rh)) : avg(units.map((u) => u.days[u.days.length - 1].rhIn));
+    const months = site.networkMonthly.map((m) => m.m);
+    const outdoorMonthly = months.map((m) => avg(days.map((d, i) => (d.startsWith(m) ? outdoor.ah[i] : null))));
 
-    let safeShare;
-    let safeKind;
+    // Aika yli RH-rajan: vuotoanturien vrk-keskiarvot > 80 %, ilman antureita MCU-2:n rakenne-RH > 90 %
+    let overShare;
     if (sensors.length) {
-      let ok = 0;
+      let over = 0;
       let all = 0;
-      sensors.forEach((s) => s.rh.forEach((v) => { if (v !== null) { all++; if (v < 80) ok++; } }));
-      safeShare = (100 * ok) / all;
-      safeKind = "sensors";
+      sensors.forEach((s) => s.rh.forEach((v) => { if (v !== null) { all++; if (v > 80) over++; } }));
+      overShare = (100 * over) / all;
     } else {
-      const all = units.flatMap((u) => u.days.map((d) => d.rhIn)).filter((x) => x !== null);
-      safeShare = (100 * all.filter((x) => x < 90).length) / all.length;
-      safeKind = "units";
+      overShare = avg(units.map((u) => u.rhIn90));
     }
-    const overShare = units.length ? avg(units.map((u) => u.rhIn90)) : 100 - safeShare;
     const sensorDays = sensors.reduce((a, s) => a + s.rh.filter((x) => x !== null).length, 0);
     const result = {
-      days, lastIdx, units, sensors,
+      days, lastIdx, units, sensors, outdoor, months, outdoorMonthly,
       unitBy: Object.fromEntries(units.map((u) => [u.name, u])),
       sensorBy: Object.fromEntries(sensors.map((s) => [s.id, s])),
-      anomalies, offline, stopped, maxMold, riskUnit,
-      othersTMin: others.length ? Math.min(...others.map((s) => s.tMin)) : null,
+      anomalies, offline, stopped, thermal, thermalStats, ventFlagged, drying, maxMold, riskUnit,
       othersRhMax: others.length ? Math.max(...others.map((s) => s.rhMax)) : null,
-      firstMonth, driest, wettest, lastMonth, rhNow, safeShare, safeKind, overShare,
+      overShare,
       fanUptime: units.length ? avg(units.map((u) => u.on)) : null,
       sensorAvailability: sensors.length ? (100 * sensorDays) / (sensors.length * days.length) : null,
-      measurements: site.real ? sensors.reduce((a, s) => a + s.n, 0) : sensors.reduce((a, s) => a + s.n, 0) + units.length * days.length * 12,
       fullYear: days.length >= 330,
     };
     analysisCache.set(site.id, result);
     return result;
   }
-  const safeLabel = (A) => (A.safeKind === "sensors"
-    ? L("anturipäivistä turvallisella alueella (vrk-keskiarvo RH < 80 %)", "of sensor-days in the safe range (daily mean RH < 80 %)")
-    : L("päivistä rakenteen RH alle 90 %", "of days with structural RH below 90 %"));
 
   const siteFindings = (site) => (state.findings[site.id] = state.findings[site.id] || {});
   const fState = (site, id) => siteFindings(site)[id] || { status: "open" };
 
+  // Havainnot: kind = device | sensor | vent | thermal | info. cost = korjausarvio € korjausrahastosta [H].
   function findings(site) {
     const A = analyze(site);
     const list = [];
@@ -262,22 +316,22 @@
         id: `fan-${u.serial}`,
         kind: "device",
         level: "alert",
+        cap: true,
+        weight: 7,
+        cost: 400,
         title: L(`${n}: puhallin ei ole käynyt ${n0(u.stopDays)} vrk`, `${n}: fan has not run for ${n0(u.stopDays)} days`),
         text: u.ongoing
           ? L(`Puhallin on ollut pysähdyksissä ${fdate(u.stopFrom)} lähtien. Rakenteen kosteus on noussut ${n1(u.stopPeak)} %:iin (kk-ka.).`, `The fan has been stopped since ${fdate(u.stopFrom)}. Structural humidity has risen to ${n1(u.stopPeak)} % (monthly mean).`)
-          : L(`Puhallin oli pysähdyksissä ${fdate(u.stopFrom)}–${fdate(u.stopTo)}${u.on < 50 ? `, ja käy edelleen vain ${n0(u.on)} % ajasta` : ""}. Rakenteen kosteus nousi seisokin aikana ${n1(u.stopPeak)} %:iin (kk-ka.).`,
-            `The fan was stopped ${fdate(u.stopFrom)}–${fdate(u.stopTo)}${u.on < 50 ? ` and still runs only ${n0(u.on)} % of the time` : ""}. Structural humidity rose to ${n1(u.stopPeak)} % (monthly mean) during the stop.`),
-        evidence: L(`Sääntö: rpm = 0 yli 48 h (pakkaspäiviä alle ${tmp(-5)} ei lasketa) ja sisä-AH > ulko-AH → tuuletus olisi kannattanut ${u.ventLost} päivänä. Sense+ olisi hälyttänyt ${fdate(u.alertDay)}.`,
-          `Rule: rpm = 0 for over 48 h (frost days below ${tmp(-5)} excluded) and indoor AH > outdoor AH → ventilation would have helped on ${u.ventLost} days. Sense+ would have alerted on ${fdate(u.alertDay)}.`),
-        plain: L(`Huippuimuri (${n}) ei käynyt ${n0(u.stopDays)} vuorokauteen, ja rakenteen kosteus nousi ${n0(u.stopPeak)} %:iin.`, `A roof fan (${n}) did not run for ${n0(u.stopDays)} days, and structural humidity rose to ${n0(u.stopPeak)} %.`),
-        pts: L(`${n}: puhaltimen huolto, vaihto jos vika toistuu (ECo Sense ${I.money(PRICE_LIST.fan.eur)}).`, `${n}: fan service, replace if the fault recurs (ECo Sense ${I.money(PRICE_LIST.fan.eur)}).`),
+          : L(`Puhallin oli pysähdyksissä ${fdate(u.stopFrom)}–${fdate(u.stopTo)}${u.on < 50 ? `, eikä se ole sen jälkeenkään toiminut normaalisti (käy ${n0(u.on)} % ajasta)` : ""}. Rakenteen kosteus nousi seisokin aikana ${n1(u.stopPeak)} %:iin (kk-ka.). Muut imurit kävivät ~90 % ajasta.`,
+            `The fan was stopped ${fdate(u.stopFrom)}–${fdate(u.stopTo)}${u.on < 50 ? ` and has not worked normally since (runs ${n0(u.on)} % of the time)` : ""}. Structural humidity rose to ${n1(u.stopPeak)} % (monthly mean) during the stop. The other fans ran ~90 % of the time.`),
+        evidence: L(`Löydös 1 · Sääntö: rpm = 0 yli 48 h (pakkaspäiviä alle ${tmp(-5)} ei lasketa) ja sisä-AH > ulko-AH → tuuletus olisi kannattanut ${u.ventLost} päivänä. Takuussa havainto 48 h:ssa: ${fdate(u.alertDay)}.`,
+          `Finding 1 · Rule: rpm = 0 for over 48 h (frost days below ${tmp(-5)} excluded) and indoor AH > outdoor AH → ventilation would have helped on ${u.ventLost} days. Under the guarantee it is caught within 48 h: ${fdate(u.alertDay)}.`),
         passOpen: L(`1 kosteudenhallintayksikkö (${n}) ei toiminut ${n0(u.stopDays)} vrk`, `1 humidity control unit (${n}) out of action for ${n0(u.stopDays)} days`),
-        passDone: L(`${n}: puhallin seis ${n0(u.stopDays)} vrk – huollettu`, `${n}: fan stopped ${n0(u.stopDays)} days – serviced`),
+        passDone: L(`${n}: puhallin seis ${n0(u.stopDays)} vrk – korjattu takuun puitteissa`, `${n}: fan stopped ${n0(u.stopDays)} days – fixed under the guarantee`),
         action: L("Tilaa huolto", "Order service"),
         target: { type: "unit", name: u.name },
-        orderText: L(`Huippuimurin ${n} (${u.serial}) puhallin ei käy. Laite on ollut pysähdyksissä ${fdate(u.stopFrom)}${u.ongoing ? " lähtien" : `–${fdate(u.stopTo)}`}. Pyydämme tarkistamaan puhaltimen, kytkennät ja MCU-2-ohjausyksikön asetukset.`,
-          `The fan of roof fan unit ${n} (${u.serial}) is not running. It has been stopped ${u.ongoing ? `since ${fdate(u.stopFrom)}` : `${fdate(u.stopFrom)}–${fdate(u.stopTo)}`}. Please check the fan, wiring and MCU-2 control unit settings.`),
-        weight: 25,
+        orderText: L(`Huippuimurin ${n} (${u.serial}) puhallin ei käy. Laite on ollut pysähdyksissä ${fdate(u.stopFrom)}${u.ongoing ? " lähtien" : `–${fdate(u.stopTo)}`}. Tarkistakaa puhallin, kytkennät ja MCU-2-ohjausyksikön asetukset. Vaihto tarvittaessa (ECo Sense ${I.money(PRICE_LIST.fan.eur)}).`,
+          `The fan of roof fan unit ${n} (${u.serial}) is not running. It has been stopped ${u.ongoing ? `since ${fdate(u.stopFrom)}` : `${fdate(u.stopFrom)}–${fdate(u.stopTo)}`}. Please check the fan, wiring and MCU-2 control unit settings. Replace if needed (ECo Sense ${I.money(PRICE_LIST.fan.eur)}).`),
       });
     });
     A.offline.forEach((s) => {
@@ -285,79 +339,123 @@
         id: `offline-${s.id}`,
         kind: "device",
         level: "warn",
+        cap: true,
+        weight: 4,
+        cost: 200,
         title: L(`Anturi ${s.id} ei ole lähettänyt dataa ${s.offlineDays} vrk`, `Sensor ${s.id} has not reported for ${s.offlineDays} ${plural(s.offlineDays, "day", "days")}`),
         text: L(`Viimeisin mittaus ${fdate(s.last.ts)}. Anturi lähettää normaalisti kaksi kertaa vuorokaudessa, joten tämä katon alue on nyt valvonnan ulkopuolella.`, `Last reading ${fdate(s.last.ts)}. The sensor normally reports twice a day, so this part of the roof is currently unmonitored.`),
-        evidence: L("Sääntö: ei mittausta yli 36 h. Todennäköinen syy: yhteyskatko tukiasemaan tai anturivika (akku mitoitettu 15 vuodelle).", "Rule: no reading for over 36 h. Likely cause: lost connection to the base station or a sensor fault (battery rated for 15 years)."),
-        plain: L(`Yksi vuotoanturi (${s.id}) lakkasi lähettämästä dataa, joten osa katosta on valvonnan ulkopuolella.`, `One leak sensor (${s.id}) stopped reporting, so part of the roof is unmonitored.`),
-        pts: L(`Anturin ${s.id} tarkistus tai vaihto (${I.money(PRICE_LIST.leakPack.eur / 10)}/${L("anturi", "sensor")}).`, `Check or replace sensor ${s.id} (${I.money(PRICE_LIST.leakPack.eur / 10)} per sensor).`),
+        evidence: L("Sääntö: ei mittausta yli 36 h. Todennäköinen syy: yhteyskatko tukiasemaan tai anturivika (akku ~15 v).", "Rule: no reading for over 36 h. Likely cause: lost connection to the base station or a sensor fault (battery ~15 yrs)."),
         passOpen: L(`1 anturi (${s.id}) ilman yhteyttä ${s.offlineDays} vrk`, `1 sensor (${s.id}) offline for ${s.offlineDays} days`),
         passDone: L(`Anturi ${s.id}: yhteys palautettu`, `Sensor ${s.id}: connection restored`),
         action: L("Tilaa huolto", "Order service"),
         target: { type: "sensor", id: s.id, day: s.last.ts.slice(0, 10) },
-        orderText: L(`Vuotoanturi ${s.id} ei ole lähettänyt mittauksia ${fdate(s.last.ts)} jälkeen. Pyydämme tarkistamaan anturin ja yhteyden tukiasemaan. Sijainti kosteuskartalla liitteenä.`, `Leak sensor ${s.id} has not reported since ${fdate(s.last.ts)}. Please check the sensor and its connection to the base station. Location on the humidity map attached.`),
-        weight: 8,
+        orderText: L(`Vuotoanturi ${s.id} ei ole lähettänyt mittauksia ${fdate(s.last.ts)} jälkeen. Tarkistakaa anturi ja yhteys tukiasemaan; vaihto tarvittaessa (${I.money(PRICE_LIST.leakPack.eur / 10)}/anturi). Sijainti kartalla liitteenä.`, `Leak sensor ${s.id} has not reported since ${fdate(s.last.ts)}. Please check the sensor and its base-station link; replace if needed (${I.money(PRICE_LIST.leakPack.eur / 10)} per sensor). Location on the map attached.`),
       });
     });
     A.anomalies.forEach((s) => {
-      const valid = (arr) => arr.filter((x) => x !== null);
-      const tMinDay = A.days[s.t.indexOf(Math.min(...valid(s.t)))];
-      const rhMaxDay = A.days[s.rh.indexOf(Math.max(...valid(s.rh)))];
-      const parts = [
-        s.rhAnomalyDays ? L(`RH nousi ${n1(s.rhMax)} %:iin (muiden maksimi ${n1(A.othersRhMax)} %)`, `RH rose to ${n1(s.rhMax)} % (others' maximum ${n1(A.othersRhMax)} %)`) : "",
-        s.tAnomalyDays ? L(`lämpötila laski ${tmp(s.tMin)}:een (muiden minimi ${tmp(A.othersTMin)})`, `temperature fell to ${tmp(s.tMin)} (others' minimum ${tmp(A.othersTMin)})`) : "",
-      ].filter(Boolean).join(L(" ja ", " and "));
-      const leakish = s.rhAnomalyDays && !s.tAnomalyDays;
+      const rhMaxDay = A.days[s.rh.indexOf(Math.max(...s.rh.filter((x) => x !== null)))];
+      const cold = A.thermal.some((t) => t.s === s && t.kind === "cold");
       list.push({
         id: `sensor-${s.id}`,
         kind: "sensor",
         level: "warn",
-        title: L(`Anturi ${s.id} poikkeaa naapureistaan`, `Sensor ${s.id} deviates from its neighbours`),
-        text: `${parts.charAt(0).toUpperCase()}${parts.slice(1)}. ${leakish
-          ? L("Kosteus nousee sateiden jälkeen vain tällä alueella – todennäköinen vuoto vedeneristeessä tai läpiviennissä.", "Humidity rises after rain only in this area – a likely leak in the waterproofing or a penetration.")
-          : L("Mahdollinen vuoto, kylmäsilta, läpivienti tai paikallinen kosteuslähde.", "Possible leak, thermal bridge, penetration or local moisture source.")}`,
-        evidence: L(`Sääntö: RH > naapurien mediaani + 3σ tai T < mediaani − ${tmpDelta(4)}. Poikkeama ${s.anomalyDays} päivänä (RH ${s.rhAnomalyDays}, T ${s.tAnomalyDays}). Kostein päivä ${fdate(rhMaxDay)}, kylmin ${fdate(tMinDay)}.`,
-          `Rule: RH > neighbours' median + 3σ or T < median − ${tmpDelta(4)}. Deviation on ${s.anomalyDays} days (RH ${s.rhAnomalyDays}, T ${s.tAnomalyDays}). Wettest day ${fdate(rhMaxDay)}, coldest ${fdate(tMinDay)}.`),
-        plain: L(`Yksi katon anturi (${s.id}) näyttää muita kosteampaa${s.tAnomalyDays ? " ja kylmempää" : ""}. Alue kannattaa tarkastaa.`, `One roof sensor (${s.id}) reads wetter${s.tAnomalyDays ? " and colder" : ""} than the rest. The area should be inspected.`),
-        pts: L(`Katon tarkastus anturin ${s.id} alueelta.`, `Roof inspection around sensor ${s.id}.`),
-        passOpen: L(`1 poikkeama-alue tunnistettu (anturi ${s.id})`, `1 anomaly area identified (sensor ${s.id})`),
-        passDone: L(`Poikkeama-alue (anturi ${s.id}) tarkastettu`, `Anomaly area (sensor ${s.id}) inspected`),
+        cap: !cold,
+        weight: cold ? 3 : 6,
+        cost: cold ? 300 : 2500,
+        title: L(`Anturi ${s.id}: kosteus poikkeaa naapureista`, `Sensor ${s.id}: humidity deviates from neighbours`),
+        text: cold
+          ? L(`RH nousi ${n1(s.rhMax)} %:iin (muiden maksimi ${n1(A.othersRhMax)} %). Sama anturi on talvella muita kylmempi → todennäköisesti reuna-alue tai kylmäsilta, jossa kosteus tiivistyy.`, `RH rose to ${n1(s.rhMax)} % (others' maximum ${n1(A.othersRhMax)} %). The same sensor is colder than the rest in winter → likely an edge or thermal bridge where moisture condenses.`)
+          : L(`RH nousi ${n1(s.rhMax)} %:iin (muiden maksimi ${n1(A.othersRhMax)} %). Kosteus nousee sateiden jälkeen vain tällä alueella → todennäköinen vuoto vedeneristeessä tai läpiviennissä. Aikainen paikannus pitää korjauksen pienenä.`, `RH rose to ${n1(s.rhMax)} % (others' maximum ${n1(A.othersRhMax)} %). Humidity rises after rain only in this area → a likely leak in the waterproofing or a penetration. Early location keeps the repair small.`),
+        evidence: L(`Sääntö: RH > naapurien mediaani + 3σ. Poikkeama ${s.anomalyDays} päivänä, kostein ${fdate(rhMaxDay)}.`, `Rule: RH > neighbours' median + 3σ. Deviation on ${s.anomalyDays} days, wettest ${fdate(rhMaxDay)}.`),
+        passOpen: L(`1 kosteuspoikkeama (anturi ${s.id})`, `1 humidity anomaly (sensor ${s.id})`),
+        passDone: L(`Kosteuspoikkeama (anturi ${s.id}) tarkastettu`, `Humidity anomaly (sensor ${s.id}) inspected`),
         action: L("Tilaa tarkastus", "Order inspection"),
         target: { type: "sensor", id: s.id, day: rhMaxDay },
-        orderText: L(`Vuotoanturi ${s.id} poikkeaa jatkuvasti naapuriantureistaan (max ${n1(s.rhMax)} % RH, min ${tmp(s.tMin)}). Pyydämme tarkastamaan katon alueen anturin ympäriltä: vedeneriste, läpiviennit, reuna-alueet ja mahdolliset kylmäsillat. Sijainti kosteuskartalla liitteenä.`,
-          `Leak sensor ${s.id} consistently deviates from neighbouring sensors (max ${n1(s.rhMax)} % RH, min ${tmp(s.tMin)}). Please inspect the roof around the sensor: waterproofing, penetrations, edges and possible thermal bridges. Location on the humidity map attached.`),
-        weight: 10,
+        orderText: L(`Vuotoanturi ${s.id} poikkeaa naapuriantureistaan (max ${n1(s.rhMax)} % RH). Paikantakaa ja korjatkaa: vedeneriste, läpiviennit, reuna-alueet. Sijainti kartalla liitteenä.`, `Leak sensor ${s.id} deviates from neighbouring sensors (max ${n1(s.rhMax)} % RH). Please locate and fix: waterproofing, penetrations, edges. Location on the map attached.`),
       });
     });
-    const actionableCount = list.filter((f) => f.action).length;
-    if (A.riskUnit && A.riskUnit.mold > 0.3) {
+    A.ventFlagged.forEach((u) => {
+      const n = uName(u);
+      const ys = u.ventYears.map((v) => `${v.y}: ${n0(v.wet)} %`).join(", ");
+      const rh = u.ventYears.map((v) => `${v.y}: ${n0(v.rh95)} %`).join(", ");
+      list.push({
+        id: `vent-${u.serial}`,
+        kind: "vent",
+        level: "warn",
+        weight: 3,
+        cost: 150,
+        title: L(`${n}: tuuletuksen hyöty vaihtelee vuodenajan mukaan`, `${n}: ventilation benefit varies with the season`),
+        text: L(`Kesällä (18.6.–10.9.) ulkoilma oli kosteampaa kuin rakenne ${ys} käyntitunneista, ja RH > 95 % ${rh} ajasta. Talvella tuuletus kuivattaa tehokkaasti. Ohjaus moduloi (~${n0(u.rpmDry)} rpm kuivatuksen ollessa mahdollista, ~${n0(u.rpmWet)} rpm ulkoilman ollessa kosteampaa); minimikierroksille voi olla syy. Homeindeksi ${n1(u.mold)} (raja 2,5).`,
+          `In summer (18 Jun–10 Sep) outdoor air was wetter than the structure for ${ys} of running hours, and RH > 95 % for ${rh} of the time. In winter ventilation dries effectively. The control modulates (~${n0(u.rpmDry)} rpm when drying is possible, ~${n0(u.rpmWet)} rpm when outdoor air is wetter); there may be a reason for minimum speed. Mould index ${n1(u.mold)} (limit 2.5).`),
+        evidence: L("Löydös 2 · Sääntö: tuuletuksen hyöty = käyntitunnit, joina AH_sisä > AH_ulko; alle 50 % ja rakenne märkä → kesäohjauksen tarkistus. Uutta tietoa myös VILPEn tuotekehitykselle.", "Finding 2 · Rule: ventilation benefit = running hours with AH_in > AH_out; below 50 % while the structure stays wet → review summer control. New insight for VILPE product development too."),
+        passOpen: L(`${n}: RH > 95 % yli puolet kesästä, homeindeksi ${n1(u.mold)} → tuuletuksen kesäohjaus tarkistetaan`, `${n}: RH > 95 % for over half of summer, mould index ${n1(u.mold)} → summer ventilation control to be reviewed`),
+        passDone: L(`${n}: tuuletuksen kesäohjaus tarkistettu`, `${n}: summer ventilation control reviewed`),
+        action: L("Tilaa ohjauksen tarkistus", "Order control review"),
+        target: { type: "unit", name: u.name },
+        orderText: L(`Huippuimurin ${n} (${u.serial}) kesäohjaus: ulkoilma on kesällä usein kosteampaa kuin rakenne. Tarkistakaa MCU-2:n ohjausasetukset (minimikierrokset, alipaine) yhdessä VILPEn kanssa.`, `Summer control of roof fan ${n} (${u.serial}): outdoor air is often wetter than the structure in summer. Please review the MCU-2 control settings (minimum speed, negative pressure) together with VILPE.`),
+      });
+    });
+    if (A.thermal.length) {
+      const coupling = A.thermal.filter((t) => t.kind === "coupling");
+      const cold = A.thermal.filter((t) => t.kind === "cold");
+      const st = A.thermalStats;
+      const cTxt = coupling.map((t) => `${t.s.id} ${nf(t.b, 2)}`).join(L(" ja ", " and "));
+      const coldFi = cold.map((t) => `${t.s.id} on koko talven muita kylmempi (ka. ${tmp(t.mean)} vs. ~${tmp(st.meanT)})`).join(", ");
+      const coldEn = cold.map((t) => `${t.s.id} is colder than the rest all winter (mean ${tmp(t.mean)} vs ~${tmp(st.meanT)})`).join(", ");
+      list.push({
+        id: "thermal",
+        kind: "thermal",
+        level: "warn",
+        weight: 1.5 * A.thermal.length,
+        cost: 0,
+        title: L(`${A.thermal.length} lämpöpoikkeamaa eristeessä`, `${A.thermal.length} thermal anomalies in the insulation`),
+        text: L(`Talvella (12–2) anturin lämpötila seurasi ulkolämpötilaa kulmakertoimella, jonka mediaani on ${nf(st.median, 2)} (σ ${nf(st.sd, 2)}). ${coupling.length ? `${cTxt} ylittävät rajan mediaani + 2σ. ` : ""}${cold.length ? `${coldFi} → reuna tai kylmäsilta. ` : ""}Arvo on kondenssiriskin paljastamisessa.`,
+          `In winter (Dec–Feb) sensor temperature tracked outdoor temperature with a median slope of ${nf(st.median, 2)} (σ ${nf(st.sd, 2)}). ${coupling.length ? `${cTxt} exceed the median + 2σ limit. ` : ""}${cold.length ? `${coldEn} → edge or thermal bridge. ` : ""}The value lies in revealing condensation risk.`),
+        evidence: L(`Löydös 4 · Sääntö: T_anturi = a + b · T_ulko (n ≈ ${st.n} vrk/anturi); b > mediaani + 2σ tai anturi > ${tmpDelta(2)} muita kylmempi.`, `Finding 4 · Rule: T_sensor = a + b · T_out (n ≈ ${st.n} days/sensor); b > median + 2σ or sensor > ${tmpDelta(2)} colder than the rest.`),
+        passOpen: L(`${coupling.length} lämpöpoikkeamaa${cold.length ? ` + ${cold.length} kylmä reuna-alue` : ""} → vuositarkastukseen`, `${coupling.length} thermal anomalies${cold.length ? ` + ${cold.length} cold edge area` : ""} → annual inspection`),
+        passDone: L("Lämpöpoikkeamat tarkastettu vuositarkastuksessa", "Thermal anomalies checked in the annual inspection"),
+        action: L("Lisää vuositarkastukseen", "Add to annual inspection"),
+        target: { type: "sensor", id: A.thermal[0].s.id, day: A.days.find((d) => /-01-15$/.test(d)) || A.days[0] },
+        orderText: L(`Vuositarkastuksen kohteet: ${A.thermal.map((t) => t.s.id).join(", ")}. Tarkistakaa eristeen jatkuvuus, reuna-alueet ja mahdolliset kylmäsillat. Sijainnit kartalla liitteenä.`, `Annual inspection targets: ${A.thermal.map((t) => t.s.id).join(", ")}. Please check insulation continuity, edges and possible thermal bridges. Locations on the map attached.`),
+      });
+    }
+    if (A.riskUnit && A.riskUnit.mold > 0.3 && !A.ventFlagged.includes(A.riskUnit)) {
       const u = A.riskUnit;
       list.push({
         id: "risk-unit",
         kind: "info",
         level: "info",
         title: L(`${uName(u)} on kohteen riskialttein osa`, `${uName(u)} is the riskiest part of the site`),
-        text: L(`Homeindeksi ${n1(u.mold)} (hälytysraja 2,5). Rakenteen RH yli 90 % ${n0(u.rhIn90)} % ajasta, vaikka puhallin käy ${n0(u.on)} % ajasta.`, `Mould index ${n1(u.mold)} (alert limit 2.5). Structural RH above 90 % for ${n0(u.rhIn90)} % of the time, although the fan runs ${n0(u.on)} % of the time.`),
-        evidence: L("Seurannassa. Suositus PTS:ään: tuuletuksen tehostus, jos homeindeksi ylittää 1,0.", "Being monitored. Long-term plan: boost ventilation if the mould index exceeds 1.0."),
-        pts: L(`${uName(u)}: tuuletuksen tehostus, jos homeindeksi ylittää 1,0.`, `${uName(u)}: boost ventilation if the mould index exceeds 1.0.`),
+        text: L(`Homeindeksi ${n1(u.mold)} (hälytysraja 2,5). Rakenteen RH yli 90 % ${n0(u.rhIn90)} % ajasta.`, `Mould index ${n1(u.mold)} (alert limit 2.5). Structural RH above 90 % for ${n0(u.rhIn90)} % of the time.`),
+        evidence: L("Löydös 5 · Seurannassa; vaikuttaa riskiluokkaan.", "Finding 5 · Being monitored; affects the risk class."),
       });
     }
-    if (site.newBuild) {
+    // Löydös 3: kuivuminen tasapainoon
+    const dryUnits = A.units.filter((u) => u.dryDelta !== null);
+    if (A.drying || dryUnits.length) {
+      const d = A.drying;
+      const wetter = dryUnits.filter((u) => u.dryDelta > 0.3);
       list.push({
         id: "drying",
         kind: "info",
         level: "ok",
-        title: L("Rakennuskosteus on kuivunut", "Construction moisture has dried out"),
-        text: L(`Katon anturiston RH laski ${n1(A.firstMonth.rh)} %:sta ${n1(A.driest.rh)} %:iin (${month(A.driest.m)}). Kesän nousu seuraa ulkoilmaa eikä yllä kriittisiin lukemiin.`, `Roof sensor RH fell from ${n1(A.firstMonth.rh)} % to ${n1(A.driest.rh)} % (${month(A.driest.m)}). The summer rise follows outdoor air and stays well below critical levels.`),
-        evidence: `${pct(A.safeShare)} % ${safeLabel(A)}.`,
+        title: L("Katon eriste on kuivunut tasapainoon", "The roof insulation has dried to equilibrium"),
+        text: [
+          d ? L(`Sama vuodenaika eri vuosina: vuotoanturien AH ${nf(d.a.ah, 2)} → ${nf(d.b.ah, 2)} g/m³ (${nf(d.dIn, 2)}), ulkoilman ${nf(d.a.out, 2)} → ${nf(d.b.out, 2)} g/m³ (${nf(d.dOut, 2)}). Muutos seuraa ulkoilmaa (ero ${nf(Math.abs(d.gap), 2)} g/m³).`,
+            `Same season in different years: leak-sensor AH ${nf(d.a.ah, 2)} → ${nf(d.b.ah, 2)} g/m³ (${nf(d.dIn, 2)}), outdoor ${nf(d.a.out, 2)} → ${nf(d.b.out, 2)} g/m³ (${nf(d.dOut, 2)}). The change follows outdoor air (gap ${nf(Math.abs(d.gap), 2)} g/m³).`) : "",
+          dryUnits.length ? L(`MCU-2-kesäjaksoissa (sisä-AH − ulko-AH) katto-osat ovat tasapainossa${wetter.length ? `; kosteammaksi muuttui ${wetter.map((u) => `${uName(u).toLowerCase()} (+${nf(u.dryDelta, 2)} g/m³)`).join(", ")}` : ""}.`,
+            `In the MCU-2 summer windows (indoor AH − outdoor AH) the roof parts are in equilibrium${wetter.length ? `; ${wetter.map((u) => `${uName(u).toLowerCase()} became wetter (+${nf(u.dryDelta, 2)} g/m³)`).join(", ")}` : ""}.`) : "",
+        ].filter(Boolean).join(" "),
+        evidence: L("Löydös 3 · Sääntö: Δ(AH_sisä − AH_ulko) samana vuodenaikana ≈ 0. Pelkkä RH-käyrä johtaisi harhaan (kausivaihtelu). Takuu voi alkaa todistetusti kuivasta rakenteesta.", "Finding 3 · Rule: Δ(AH_in − AH_out) in the same season ≈ 0. An RH curve alone would mislead (seasonal variation). The guarantee can start from a verified dry structure."),
       });
     } else {
       list.push({
         id: "stable",
         kind: "info",
         level: "ok",
-        title: actionableCount ? L("Kosteustaso muuten normaali", "Humidity otherwise normal") : L("Kosteustaso on normaali", "Humidity is normal"),
-        text: L(`Rakenteen kosteus vaihteli kuukausitasolla ${n1(A.driest.rh)}–${n1(A.wettest.rh)} % (${month(A.firstMonth.m)}–${month(A.lastMonth.m)}). Vaihtelu seuraa vuodenaikoja eikä yllä kriittisiin lukemiin.`, `Monthly structural humidity ranged ${n1(A.driest.rh)}–${n1(A.wettest.rh)} % (${month(A.firstMonth.m)}–${month(A.lastMonth.m)}). The variation follows the seasons and stays below critical levels.`),
-        evidence: `${pct(A.safeShare)} % ${safeLabel(A)}.`,
+        title: L("Kosteustaso normaali", "Humidity normal"),
+        text: L("Rakenteen kosteus seuraa vuodenaikoja eikä yllä kriittisiin lukemiin. Kuivumisen vuosivertailu (sama vuodenaika kahtena vuonna) tehdään, kun toinen kesäjakso on mitattu.", "Structural humidity follows the seasons and stays below critical levels. The year-on-year drying comparison (same season in two years) is made once the second summer window has been measured."),
+        evidence: L(`Seurantaa ${A.days.length} vrk.`, `${A.days.length} days of monitoring.`),
       });
     }
     return list.map((f) => ({ ...f, state: fState(site, f.id) }));
@@ -365,43 +463,51 @@
   const actionable = (site) => findings(site).filter((f) => f.action);
   const openCount = (site) => actionable(site).filter((f) => f.state.status !== "resolved").length;
 
-  // Health Score: 100 − homeriski (30) − aika yli RH-rajan (25) − laiteviat (25) − avoimet poikkeamat (20)
-  function health(site) {
+  // Riskiluokka: 100 − homeriski (25) − aika yli RH-rajan (20) − laiteviat (20) − lämpöpoikkeamat (15) − avoimet havainnot (20)
+  // A ≥ 90, B ≥ 75, C ≥ 60, D ≥ 40, E < 40. Avoin laitevika tai vuotoepäily estää A-luokan.
+  function risk(site) {
     const A = analyze(site);
     const w = (f) => (f.state.status === "open" ? 1 : f.state.status === "ordered" ? 0.5 : 0);
     const fs = actionable(site);
-    const mold = A.maxMold === null ? 0 : Math.min(30, (A.maxMold / 2.5) * 30);
-    const rh = (A.overShare / 100) * 25;
-    const dev = Math.min(25, fs.filter((f) => f.kind === "device").reduce((a, f) => a + f.weight * w(f), 0));
-    const ano = Math.min(20, fs.filter((f) => f.kind === "sensor").reduce((a, f) => a + f.weight * w(f), 0));
-    return { score: Math.round(100 - mold - rh - dev - ano), parts: { mold, rh, dev, ano } };
+    const sum = (kinds, cap) => Math.min(cap, fs.filter((f) => kinds.includes(f.kind)).reduce((a, f) => a + f.weight * w(f), 0));
+    const parts = {
+      mold: A.maxMold === null ? 0 : Math.min(25, (A.maxMold / 2.5) * 25),
+      rh: (A.overShare / 100) * 20,
+      dev: sum(["device"], 20),
+      thermal: sum(["thermal"], 15),
+      open: sum(["sensor", "vent"], 20),
+    };
+    let score = Math.round(100 - parts.mold - parts.rh - parts.dev - parts.thermal - parts.open);
+    if (fs.some((f) => f.cap && f.state.status !== "resolved")) score = Math.min(score, 89);
+    return { score, cls: toClass(score), parts };
   }
-  const level = (score) => (score >= 75 ? "ok" : score >= 50 ? "warn" : "alert");
-  // Liikennevalo: avoin havainto pitää kohteen vähintään keltaisena
-  const siteLevel = (site, score = health(site).score) => { const lv = level(score); return lv === "ok" && openCount(site) > 0 ? "warn" : lv; };
-  const LEVEL_COLOR = { ok: "#3ADB76", warn: "#FFAE00", alert: "#E2202C", info: "#1A62A9" };
-  const LEVEL_DARK = { ok: "#157539", warn: "#805700", alert: "#A3141C" };
-  const levelText = (lv) => ({ ok: L("Kunnossa", "Good"), warn: L("Vaatii huomiota", "Needs attention"), alert: L("Kriittinen", "Critical") }[lv]);
-  const passGrade = (site) => (openCount(site) === 0 ? "A" : "B");
-  const GRADE_COLORS = { A: "#157539", B: "#3ADB76", C: "#FFAE00", D: "#E3530F", E: "#A00000" };
-  const devicesText = (site) => [
-    site.sensors.length ? L(`${site.sensors.length} anturia`, `${site.sensors.length} sensors`) : "",
-    site.units.length ? L(`${site.units.length} imuria`, `${site.units.length} roof ${plural(site.units.length, "fan", "fans")}`) : "",
-  ].filter(Boolean).join(" · ");
+  const toClass = (s) => (s >= 90 ? "A" : s >= 75 ? "B" : s >= 60 ? "C" : s >= 40 ? "D" : "E");
+  // Rakenneosan riskiluokka (MCU-2-yksiköt)
+  function unitClass(site, u) {
+    const A = analyze(site);
+    const open = (id) => fState(site, id).status !== "resolved";
+    let s = 100 - Math.min(25, (u.mold / 2.5) * 25) - (u.rhIn90 / 100) * 20;
+    if (A.stopped.includes(u) && open(`fan-${u.serial}`)) s -= 20;
+    if (u.ventFlag && open(`vent-${u.serial}`)) s -= 10;
+    return toClass(s);
+  }
+  const CLASS_COLOR = { A: "#157539", B: "#3ADB76", C: "#FFAE00", D: "#E3530F", E: "#A00000" };
+  const classText = (c) => ({ A: L("Erinomainen", "Excellent"), B: L("Hyvä", "Good"), C: L("Tyydyttävä", "Fair"), D: L("Korjattava ennen takuuta", "Repairs needed first"), E: L("Ei takuukelpoinen", "Not eligible") }[c]);
+  const badge = (c, size = "") => `<span class="rclass ${size}" style="background:${CLASS_COLOR[c]}">${c}</span>`;
+
+  // Takuun talous per kohde
+  function guarantee(site) {
+    const r = risk(site);
+    const price = CLASS_PRICE[r.cls] || CLASS_PRICE.D;
+    const fee = price * site.m2;
+    const fund = (0.25 / 1.5) * fee;
+    const used = actionable(site).filter((f) => f.state.status !== "open").reduce((a, f) => a + (f.cost || 0), 0);
+    return { ...r, price, fee, fund, used, balance: fund - used };
+  }
+
   const comboText = (site) => (site.sensors.length && site.units.length ? L("Vuotopaikannin + kosteudenhallinta", "Leak detection + humidity control") : site.sensors.length ? L("Vuotopaikannin", "Leak detection") : L("Kosteudenhallinta", "Humidity control"));
-  const findingCountText = (n) => (n ? L(`${n} avoin${n > 1 ? "ta" : ""} havainto${n > 1 ? "a" : ""}`, `${n} open ${plural(n, "finding", "findings")}`) : L("Kaikki kunnossa", "All good"));
+  const findingCountText = (n) => (n ? L(`${n} avoin${n > 1 ? "ta" : ""} havainto${n > 1 ? "a" : ""}`, `${n} open ${plural(n, "finding", "findings")}`) : L("Ei avoimia havaintoja", "No open findings"));
 
-  function gauge(score, size = 72, dark = true, lv = level(score)) {
-    const r = 30;
-    const c = 2 * Math.PI * r;
-    return `<svg class="gauge" viewBox="0 0 72 72" width="${size}" height="${size}" aria-label="Health Score ${score}">
-      <circle cx="36" cy="36" r="${r}" fill="none" stroke="${dark ? "rgba(255,255,255,.15)" : "rgba(1,39,62,.08)"}" stroke-width="7"/>
-      <circle cx="36" cy="36" r="${r}" fill="none" stroke="${LEVEL_COLOR[lv]}" stroke-width="7" stroke-dasharray="${(c * Math.max(0, score)) / 100} ${c}" transform="rotate(-90 36 36)"/>
-      <text x="36" y="42" text-anchor="middle" font-size="20" font-weight="700" fill="${dark ? "#fff" : "#01273E"}" font-family="Inter, Helvetica, Arial">${score}</text>
-    </svg>`;
-  }
-
-  // Kohdevalitsin kohdekohtaisille näkymille
   function siteSelect(site, viewKey) {
     return `<label class="site-select"><span class="caps muted">${L("Kohde", "Site")}</span>
       <select data-site-select="${viewKey}">${allSites().map((s) => `<option value="${s.id}" ${s.id === site.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>`;
@@ -410,11 +516,11 @@
     $$("[data-site-select]").forEach((sel) => sel.addEventListener("change", () => { location.hash = `#/${sel.dataset.siteSelect}/${sel.value}`; }));
   }
   const dataBadge = (site) => (site.real
-    ? `<span class="chip chip--info">${L("Oikea data", "Real data")}</span>`
+    ? `<span class="chip chip--info">${L("Oikea data", "Real data")}${site.pilot ? ` · ${L("pilotti", "pilot")}` : ""}</span>`
     : `<span class="chip chip--muted">${L("Simuloitu data", "Simulated data")}${site.custom ? ` · ${L("uusi kohde", "new site")}` : ""}</span>`);
 
   function noSites() {
-    view.innerHTML = `<div class="card locked"><h2 style="margin-bottom:8px">${L("Salkussa ei ole kohteita", "No sites in the portfolio")}</h2><p>${L("Lisää ensimmäinen kohde salkkunäkymässä.", "Add your first site in the portfolio view.")}</p><div style="margin-top:18px"><a class="button" href="#/salkku">${L("Siirry salkkuun", "Go to portfolio")}</a></div></div>`;
+    view.innerHTML = `<div class="card locked"><h2 style="margin-bottom:8px">${L("Salkussa ei ole kohteita", "No sites in the portfolio")}</h2><p>${L("Lisää ensimmäinen takuukohde salkkunäkymässä.", "Add your first guarantee site in the portfolio view.")}</p><div style="margin-top:18px"><a class="button" href="#/salkku">${L("Siirry salkkuun", "Go to portfolio")}</a></div></div>`;
   }
 
   // ---------- Kirjautumissivu ----------
@@ -424,7 +530,7 @@
         <div class="login__brand">
           <img src="assets/vilpe-logo.svg" alt="VILPE">
           <h1>Sense<b>+</b></h1>
-          <p>${L("Rakenteen kosteusturva koko elinkaaren ajan.", "Structural moisture protection for the whole building lifecycle.")}</p>
+          <p><b>${L("Kuiva katto -takuu", "Dry Roof Guarantee")}</b><br>${L("Maksa kuivasta katosta, älä antureista.", "Pay for a dry roof, not for sensors.")}</p>
         </div>
         <form class="login__form" id="login-form" novalidate>
           <h2>${L("Kirjaudu sisään", "Sign in")}</h2>
@@ -457,47 +563,44 @@
     route();
   }
 
-  // ---------- Salkku ja kohteiden hallinta ----------
+  // ---------- Takuusalkku ja kohteiden hallinta ----------
   function renderPortfolio() {
-    const sites = allSites().map((s) => { const h = health(s).score; return { s, h, lv: siteLevel(s, h), open: openCount(s) }; }).sort((a, b) => a.h - b.h);
-    const attention = sites.filter((x) => x.lv !== "ok").length;
-    const openTotal = sites.reduce((a, x) => a + x.open, 0);
-    const devTotal = sites.reduce((a, x) => a + x.s.sensors.length + x.s.units.length, 0);
-    const devOk = sites.reduce((a, x) => {
-      const A = analyze(x.s);
-      const broken = A.stopped.filter((u) => fState(x.s, `fan-${u.serial}`).status !== "resolved").length;
-      const off = A.offline.filter((s) => fState(x.s, `offline-${s.id}`).status !== "resolved").length;
-      return a + x.s.sensors.length + x.s.units.length - broken - off;
-    }, 0);
+    const rows = allSites().map((s) => ({ s, g: guarantee(s), open: openCount(s) }));
+    const order = "ABCDE";
+    rows.sort((a, b) => order.indexOf(b.g.cls) - order.indexOf(a.g.cls) || b.open - a.open || a.g.score - b.g.score);
+    const m2 = rows.reduce((a, r) => a + r.s.m2, 0);
+    const fees = rows.reduce((a, r) => a + r.g.fee, 0);
+    const orders = rows.reduce((a, r) => a + actionable(r.s).filter((f) => f.state.status === "ordered").length, 0);
+    const openTotal = rows.reduce((a, r) => a + r.open, 0);
 
     view.innerHTML = `
       <div class="page-head">
         <div>
           <div class="caps muted">${I.weekday(today)} ${fdate(today)}</div>
-          <h1>${L("Kohdesalkku", "Portfolio")}</h1>
-          <p>${L("Kosteusturvan tilannekuva kohteistasi – järjestetty kiireellisyyden mukaan.", "Moisture status of your sites – sorted by urgency.")}</p>
+          <h1>${L("Takuusalkku", "Guarantee portfolio")}</h1>
+          <p>${L("Kuiva katto kiinteään hintaan: riskiluokka, takuumaksu ja työtilaukset kohteittain.", "A dry roof at a fixed price: risk class, guarantee fee and work orders per site.")}</p>
         </div>
         <button class="button" id="add-site">+ ${L("Lisää kohde", "Add site")}</button>
       </div>
-      ${sites.length ? `
+      ${rows.length ? `
       <div class="summary">
-        <div><b class="num">${sites.length}</b><span>${L("kohdetta Sense+ Caressa", "sites in Sense+ Care")}</span></div>
-        <div><b class="num" style="color:${attention ? LEVEL_DARK.warn : LEVEL_DARK.ok}">${attention}</b><span>${L("vaatii huomiota", "need attention")}</span></div>
-        <div><b class="num" style="color:${openTotal ? LEVEL_DARK.alert : LEVEL_DARK.ok}">${openTotal}</b><span>${L("avointa havaintoa", "open findings")}</span></div>
-        <div><b class="num">${devOk}/${devTotal}</b><span>${L("laitetta toiminnassa", "devices operational")}</span></div>
+        <div><b class="num">${rows.length}</b><span>${L("takuukohdetta", "guarantee sites")}</span></div>
+        <div><b class="num">${area(m2)}</b><span>${L("kattoa takuun piirissä", "of roof under guarantee")}</span></div>
+        <div><b class="num">${I.money(fees)}</b><span>${L("takuumaksut vuodessa", "guarantee fees per year")}</span></div>
+        <div><b class="num" style="color:${openTotal ? "#A3141C" : "#157539"}">${openTotal}</b><span>${L(`avointa havaintoa · ${orders} työtilausta käynnissä`, `open findings · ${orders} work orders in progress`)}</span></div>
       </div>
       <div class="sites">
-        ${sites.map(({ s, h, lv, open }) => `<article class="site" data-open-site="${s.id}" tabindex="0" role="link" aria-label="${L("Avaa", "Open")} ${esc(s.name)}">
-            <div class="site__bar" style="background:${LEVEL_COLOR[lv]}"></div>
+        ${rows.map(({ s, g, open }) => `<article class="site" data-open-site="${s.id}" tabindex="0" role="link" aria-label="${L("Avaa", "Open")} ${esc(s.name)}">
+            <div class="site__bar" style="background:${CLASS_COLOR[g.cls]}"></div>
             <div class="site__body">
               <div class="site__info">
                 <h3>${esc(s.name)}</h3>
                 <div class="site__meta">${esc(s.city)} · ${esc(siteType(s))}</div>
-                <div class="site__meta">${comboText(s)} · ${devicesText(s)}</div>
-                <div class="site__meta">${L("Seuranta", "Monitoring")} ${fdate(s.days[0])}–${fdate(s.days[s.days.length - 1])}</div>
-                <div class="site__status"><span class="dot dot--${lv}"></span><span>${findingCountText(open)}</span></div>
+                <div class="site__meta">${area(s.m2)} · ${comboText(s)}</div>
+                <div class="site__meta"><b>${I.money(g.fee)}/${yr()}</b> · ${perArea(g.price)}/${yr()}</div>
+                <div class="site__status"><span class="dot dot--${open ? "warn" : "ok"}"></span><span>${findingCountText(open)}</span></div>
               </div>
-              <div class="site__score"><b class="num" style="color:${LEVEL_DARK[lv]}">${h}</b><span>Health Score</span></div>
+              <div class="site__score">${badge(g.cls, "rclass--lg")}<span>${L("Riskiluokka", "Risk class")}</span></div>
             </div>
             <div class="site__foot">
               <span>${dataBadge(s)}</span>
@@ -518,15 +621,15 @@
   const ROOF_TYPES = ["Tasakatto", "Viherkatto", "Ullakollinen yläpohja", "Aluskatteeton peltikatto", "Ryömintätilainen alapohja"];
   function openAddSite() {
     openModal(`
-      <div class="modal__head"><h2 id="modal-title">${L("Lisää kohde", "Add site")}</h2><button class="modal__close" data-close aria-label="${L("Sulje", "Close")}">×</button></div>
+      <div class="modal__head"><h2 id="modal-title">${L("Lisää takuukohde", "Add guarantee site")}</h2><button class="modal__close" data-close aria-label="${L("Sulje", "Close")}">×</button></div>
       <form class="modal__body" id="site-form" novalidate>
-        <div class="form-row"><label for="s-name">${L("Kohteen nimi", "Site name")}</label><input id="s-name" placeholder="${L("esim. As Oy Esimerkkitalo", "e.g. Example House")}" required maxlength="60"></div>
+        <div class="form-row"><label for="s-name">${L("Kohteen nimi", "Site name")}</label><input id="s-name" placeholder="${L("esim. Logistiikkahalli Seinäjoki", "e.g. Logistics hall Seinäjoki")}" required maxlength="60"></div>
         <div class="form-row"><label for="s-city">${L("Paikkakunta", "City")}</label><input id="s-city" value="Vaasa" maxlength="40"></div>
         <div class="form-row"><label for="s-type">${L("Rakenne", "Structure")}</label><select id="s-type">${ROOF_TYPES.map((t) => `<option value="${t}">${typeLabel(t)}</option>`).join("")}</select></div>
-        <div class="form-row"><label for="s-sensors">${L("Vuotoanturit (RHT-2)", "Leak sensors (RHT-2)")}</label><input id="s-sensors" type="number" min="0" max="80" value="20"></div>
-        <div class="form-row"><label for="s-units">${L("Kosteudenhallinta (MCU-2 + imuri)", "Humidity control (MCU-2 + fan)")}</label><input id="s-units" type="number" min="0" max="10" value="1"></div>
-        <div class="form-row"><label for="s-apts">${L("Asuntoja", "Apartments / units")}</label><input id="s-apts" type="number" min="0" max="400" value="24"></div>
-        <div class="form-row"><span class="label"></span><p class="muted" style="font-size:13px">${L("Demossa uuden kohteen data simuloidaan 12 kuukauden ajalta valitulla laitekombolla.", "In the demo, 12 months of data are simulated for the new site with the chosen device combination.")}</p></div>
+        <div class="form-row"><label for="s-m2">${L("Katon pinta-ala (m²)", "Roof area (m²)")}</label><input id="s-m2" type="number" min="100" max="50000" value="3000"></div>
+        <div class="form-row"><label for="s-sensors">${L("Vuotoanturit (RHT-2)", "Leak sensors (RHT-2)")}</label><input id="s-sensors" type="number" min="0" max="400" value="150"></div>
+        <div class="form-row"><label for="s-units">${L("Kosteudenhallinta (MCU-2 + imuri)", "Humidity control (MCU-2 + fan)")}</label><input id="s-units" type="number" min="0" max="10" value="0"></div>
+        <div class="form-row"><span class="label"></span><p class="muted" style="font-size:13px">${L("Aloituskartoitus: anturit ~10 / 200 m², asennetaan takuun alussa (sisältyy maksuun). Demossa data simuloidaan 12 kuukauden ajalta.", "Start survey: sensors ~10 per 200 m², installed at guarantee start (included in the fee). In the demo, 12 months of data are simulated.")}</p></div>
         <p class="login__error" id="site-error" role="alert" hidden></p>
       </form>
       <div class="modal__foot">
@@ -534,31 +637,27 @@
         <button class="button" id="save-site">${L("Lisää kohde", "Add site")}</button>
       </div>`);
     $("#s-name").focus();
+    $("#s-m2").addEventListener("input", () => { $("#s-sensors").value = Math.round((+$("#s-m2").value || 0) / 20); });
     const submit = () => {
       const name = $("#s-name").value.trim();
-      const sensors = Math.max(0, Math.min(80, Math.round(+$("#s-sensors").value || 0)));
+      const m2 = Math.max(100, Math.min(50000, Math.round(+$("#s-m2").value || 0)));
+      const sensors = Math.max(0, Math.min(400, Math.round(+$("#s-sensors").value || 0)));
       const units = Math.max(0, Math.min(10, Math.round(+$("#s-units").value || 0)));
       const err = $("#site-error");
       const fail = (msg) => { err.textContent = msg; err.hidden = false; };
       if (!name) return fail(L("Anna kohteelle nimi.", "Enter a name for the site."));
       if (sensors + units === 0) return fail(L("Kohteessa pitää olla vähintään yksi anturi tai kosteudenhallintayksikkö.", "The site needs at least one sensor or humidity control unit."));
-      if (sensors === 1) return fail(L("Vuotopaikannukseen tarvitaan vähintään 2 anturia (suositus ~10 / 200 m²).", "Leak detection needs at least 2 sensors (recommended ~10 per 200 m²)."));
+      if (sensors === 1) return fail(L("Vuotopaikannukseen tarvitaan vähintään 2 anturia.", "Leak detection needs at least 2 sensors."));
       const id = `k${Date.now().toString(36)}`;
       state.custom.push({
-        id,
-        custom: true,
-        name,
+        id, custom: true, name, m2, sensors, units,
         city: $("#s-city").value.trim() || "–",
         type: $("#s-type").value,
-        apartments: Math.max(0, Math.round(+$("#s-apts").value || 0)) || null,
-        sensors,
-        units,
-        storyEvents: [{ d: TODAY_ISO, cls: "info", t: "Kohde lisätty Sense+ Careen", tEn: "Site added to Sense+ Care" }],
       });
       save();
       closeModal();
       route();
-      toast(L(`${name} lisätty salkkuun.`, `${name} added to the portfolio.`));
+      toast(L(`${name} lisätty takuusalkkuun.`, `${name} added to the guarantee portfolio.`));
     };
     $("#save-site").addEventListener("click", submit);
     $("#site-form").addEventListener("submit", (e) => { e.preventDefault(); submit(); });
@@ -570,7 +669,7 @@
     openModal(`
       <div class="modal__head"><h2 id="modal-title">${L("Poista kohde", "Delete site")}</h2><button class="modal__close" data-close aria-label="${L("Sulje", "Close")}">×</button></div>
       <div class="modal__body">
-        <p>${L(`Poistetaanko <b>${esc(site.name)}</b> salkusta? Kohteen havainnot, työtilaukset ja suostumukset poistuvat näkymistä.`, `Delete <b>${esc(site.name)}</b> from the portfolio? Its findings, work orders and consents will be removed.`)}</p>
+        <p>${L(`Poistetaanko <b>${esc(site.name)}</b> takuusalkusta? Kohteen havainnot, työtilaukset ja suostumukset poistuvat näkymistä.`, `Delete <b>${esc(site.name)}</b> from the guarantee portfolio? Its findings, work orders and consents will be removed.`)}</p>
         <p class="muted" style="font-size:13px;margin-top:10px">${site.custom ? L("Itse lisätty kohde poistetaan pysyvästi.", "A site you added is deleted permanently.") : L("Demokohteen saa takaisin footerin Nollaa demo -painikkeella.", "Demo sites can be restored with Reset demo in the footer.")}</p>
       </div>
       <div class="modal__foot">
@@ -595,7 +694,7 @@
     });
   }
 
-  // ---------- Kohde ----------
+  // ---------- Takuukohde ----------
   const ui = { siteId: null, day: 0, metric: "rh", sensor: null, unit: null, playing: null };
 
   function renderSite(site) {
@@ -604,35 +703,35 @@
       ui.siteId = site.id;
       ui.day = A.lastIdx;
       ui.sensor = null;
-      ui.unit = A.stopped[0] ? A.stopped[0].name : A.units[0] ? A.units[0].name : null;
+      ui.unit = A.stopped[0] ? A.stopped[0].name : A.ventFlagged[0] ? A.ventFlagged[0].name : A.units[0] ? A.units[0].name : null;
     }
-    const h = health(site);
-    const lv = siteLevel(site, h.score);
-    const brokenUnits = A.stopped.filter((u) => fState(site, `fan-${u.serial}`).status !== "resolved").length;
-    const offlineOpen = A.offline.filter((s) => fState(site, `offline-${s.id}`).status !== "resolved").length;
+    const g = guarantee(site);
     const fs = findings(site);
     const hasSensors = A.sensors.length > 0;
     const hasUnits = A.units.length > 0;
+    const devTotal = A.sensors.length + A.units.length;
+    const devDown = A.stopped.filter((u) => fState(site, `fan-${u.serial}`).status !== "resolved").length + A.offline.filter((s) => fState(site, `offline-${s.id}`).status !== "resolved").length;
+    const thermalIds = new Set(A.thermal.map((t) => t.s.id));
+    const dense = A.sensors.length > 80;
 
     view.innerHTML = `
       <div class="page-head">
         <div>
-          <div class="crumbs"><a href="#/salkku">${L("Salkku", "Portfolio")}</a> / ${L("Kohde", "Site")}</div>
+          <div class="crumbs"><a href="#/salkku">${L("Takuusalkku", "Guarantee portfolio")}</a> / ${L("Takuukohde", "Guarantee site")}</div>
           <h1>${esc(site.name)}</h1>
-          <p>${esc(siteStructure(site))} · ${comboText(site)} · ${L("seuranta", "monitoring")} ${fdate(A.days[0])}–${fdate(A.days[A.lastIdx])} ${dataBadge(site)}</p>
+          <p>${esc(siteStructure(site))} · ${area(site.m2)} · ${comboText(site)} · ${L("seuranta", "monitoring")} ${fdate(A.days[0])}–${fdate(A.days[A.lastIdx])} ${dataBadge(site)}</p>
         </div>
         <div class="button-row">
           ${siteSelect(site, "kohde")}
-          <a class="button button--hollow" href="#/raportti/${site.id}">${L("Hallitusraportti", "Board report")}</a>
-          <a class="button" href="#/passi/${site.id}">${L("Luo Kosteuspassi", "Create Moisture Passport")}</a>
+          <a class="button" href="#/passi/${site.id}">${L("Vuosipassi", "Annual passport")}</a>
         </div>
       </div>
 
       <div class="kpis">
-        <div class="kpi kpi--score">${gauge(h.score, 72, true, lv)}<div><div class="caps">Roof Health Score</div><span>${levelText(lv)}</span></div></div>
-        <div class="kpi"><b class="num" style="color:${offlineOpen ? LEVEL_DARK.alert : "inherit"}">${hasSensors ? `${A.sensors.length - offlineOpen}/${A.sensors.length}` : "–"}</b><span>${hasSensors ? L("vuotoanturia yhteydessä", "leak sensors online") : L("ei vuotoantureita", "no leak sensors")}</span></div>
-        <div class="kpi"><b class="num" style="color:${brokenUnits ? LEVEL_DARK.alert : "inherit"}">${hasUnits ? `${A.units.length - brokenUnits}/${A.units.length}` : "–"}</b><span>${hasUnits ? L("kosteudenhallintayksikköä toiminnassa", "humidity control units running") : L("ei kosteudenhallintaa", "no humidity control")}</span></div>
-        <div class="kpi"><b class="num">${n1(A.rhNow)} %</b><span>${L("rakenteen RH nyt (ka.)", "structural RH now (mean)")}</span></div>
+        <div class="kpi kpi--score">${badge(g.cls, "rclass--xl")}<div><div class="caps">${L("Riskiluokka", "Risk class")}</div><span>${classText(g.cls)} · ${g.score}/100</span></div></div>
+        <div class="kpi"><b class="num">${I.money(g.fee)}</b><span>${L("takuumaksu vuodessa", "guarantee fee per year")} · ${perArea(g.price)}</span></div>
+        <div class="kpi"><b class="num" style="color:${g.balance < 0 ? "#A3141C" : "inherit"}">${I.money(g.balance)}</b><span>${L(`korjausrahaston saldo · ${I.money(g.fund)}/v, käytetty ${I.money(g.used)}`, `repair fund balance · ${I.money(g.fund)}/yr, used ${I.money(g.used)}`)}</span></div>
+        <div class="kpi"><b class="num" style="color:${devDown ? "#A3141C" : "inherit"}">${devTotal - devDown}/${devTotal}</b><span>${L("laitetta toiminnassa", "devices operational")}</span></div>
         <div class="kpi"><b class="num">${A.maxMold === null ? "–" : n1(A.maxMold)}</b><span>${A.maxMold === null ? L("homeindeksi vaatii MCU-2:n", "mould index requires MCU-2") : L("suurin homeindeksi (raja 2,5)", "highest mould index (limit 2.5)")}</span></div>
       </div>
 
@@ -640,20 +739,21 @@
         <div class="stack">
           <section class="card" id="map-card">
             <div class="card__head">
-              <h2>${hasSensors ? L("Kosteuskartta", "Humidity map") : L("Laitekartta", "Device map")}</h2>
+              <h2>${hasSensors ? L("Kosteuskartta ja löydökset", "Humidity map and findings") : L("Laitekartta", "Device map")}</h2>
               ${hasSensors ? `<div class="segmented" role="group" aria-label="${L("Suure", "Quantity")}">
                 <button data-metric="rh" class="${ui.metric === "rh" ? "is-active" : ""}">RH %</button>
                 <button data-metric="t" class="${ui.metric === "t" ? "is-active" : ""}">${I.tempUnit()}</button>
               </div>` : ""}
             </div>
-            <div class="map ${site.real ? "" : "map--sim"}" id="map">
+            <div class="map ${site.real ? "" : "map--sim"} ${dense ? "map--dense" : ""}" id="map">
               <img src="${site.roof.src}" alt="${L("Kattokartta", "Roof plan")}, ${esc(site.name)}" width="${site.roof.w}" height="${site.roof.h}">
               <canvas id="heat"></canvas>
               ${A.sensors.map((s) => {
                 const flagged = (A.anomalies.includes(s) && fState(site, `sensor-${s.id}`).status !== "resolved") || (A.offline.includes(s) && fState(site, `offline-${s.id}`).status !== "resolved");
-                return `<button class="map__pin ${flagged ? "map__pin--flag" : ""}" data-sensor="${s.id}" style="left:${s.pos[0] * 100}%;top:${s.pos[1] * 100}%" aria-label="${L("Anturi", "Sensor")} ${s.id}"></button>`;
+                const therm = thermalIds.has(s.id) && fState(site, "thermal").status !== "resolved";
+                return `<button class="map__pin ${flagged ? "map__pin--flag" : ""} ${therm ? "map__pin--thermal" : ""}" data-sensor="${s.id}" style="left:${s.pos[0] * 100}%;top:${s.pos[1] * 100}%" aria-label="${L("Anturi", "Sensor")} ${s.id}"></button>`;
               }).join("")}
-              ${A.units.filter((u) => u.pos).map((u) => `<button class="map__unit" data-unit="${esc(u.name)}" style="left:${u.pos[0] * 100}%;top:${u.pos[1] * 100}%" aria-label="${esc(uName(u))}"></button>`).join("")}
+              ${A.units.filter((u) => u.pos).map((u) => `<button class="map__unit ${u.ventFlag && fState(site, `vent-${u.serial}`).status !== "resolved" ? "map__unit--vent" : ""}" data-unit="${esc(u.name)}" style="left:${u.pos[0] * 100}%;top:${u.pos[1] * 100}%" aria-label="${esc(uName(u))}"></button>`).join("")}
             </div>
             <div class="map-controls">
               <button class="round-btn" id="play" aria-label="${L("Toista seurantajakso", "Play the monitoring period")}">▶</button>
@@ -662,25 +762,30 @@
             </div>
             <div class="legend">
               ${hasSensors ? `<span class="legend__item"><span class="scale" id="scale"></span><span id="scale-label"></span></span>
-              <span class="legend__item"><span class="dot" style="border-radius:50%;background:#1A62A9"></span>${L("RHT-2 vuotoanturi", "RHT-2 leak sensor")}</span>` : ""}
-              ${hasUnits ? `<span class="legend__item"><span class="dot" style="transform:rotate(45deg);background:#3ADB76"></span>${L("MCU-2 huippuimuri (punainen = seis)", "MCU-2 roof fan (red = stopped)")}</span>` : ""}
-              ${hasSensors ? `<span class="legend__item"><span class="dot" style="border-radius:50%;box-shadow:0 0 0 2px #E2202C;background:#fff"></span>${L("havainto", "finding")}</span>` : ""}
+              <span class="legend__item"><span class="dot" style="border-radius:50%;box-shadow:0 0 0 2px #E2202C;background:#fff"></span>${L("kosteuspoikkeama / offline", "humidity anomaly / offline")}</span>
+              <span class="legend__item"><span class="dot" style="border-radius:50%;box-shadow:0 0 0 2px #E3530F;background:#fff"></span>${L("lämpöpoikkeama", "thermal anomaly")}</span>` : ""}
+              ${hasUnits ? `<span class="legend__item"><span class="dot" style="transform:rotate(45deg);background:#3ADB76"></span>${L("MCU-2 (punainen = seis, oranssi reuna = kesäohjaus)", "MCU-2 (red = stopped, orange ring = summer control)")}</span>` : ""}
             </div>
             <div id="sensor-detail"></div>
           </section>
 
           ${hasUnits ? `<section class="card" id="units-card">
-            <div class="card__head"><h2>${L("Kosteudenhallintayksiköt", "Humidity control units")}</h2><span class="caps">MCU-2 · ${month(A.days[0].slice(0, 7))}–${month(A.days[A.lastIdx].slice(0, 7))}</span></div>
+            <div class="card__head"><h2>${L("Rakenneosat ja kosteudenhallinta", "Structure parts and humidity control")}</h2><span class="caps">MCU-2</span></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>${L("Laite", "Unit")}</th><th>${L("Tila", "Status")}</th><th class="r">${L("Puhallin käynnissä", "Fan running")}</th><th class="r">${L("Rakenteen RH ka.", "Structural RH mean")}</th><th class="r">RH &gt; 90 %</th><th class="r">${L("Homeindeksi", "Mould index")}</th></tr></thead>
+                <thead><tr><th>${L("Rakenneosa", "Part")}</th><th>${L("Luokka", "Class")}</th><th>${L("Tila", "Status")}</th><th class="r">${L("Puhallin käynnissä", "Fan running")}</th><th class="r">${L("Tuuletuksen hyöty kesällä", "Summer ventilation benefit")}</th><th class="r">${L("RH > 95 % kesällä", "RH > 95 % in summer")}</th><th class="r">${L("Homeindeksi", "Mould index")}</th></tr></thead>
                 <tbody>${A.units.map((u) => {
-                  const st = A.stopped.includes(u) ? fState(site, `fan-${u.serial}`).status : null;
-                  const chip = st === "open" ? `<span class="chip chip--alert">${L("Puhallin seis", "Fan stopped")}</span>` : st === "ordered" ? `<span class="chip chip--warn">${L("Huolto tilattu", "Service ordered")}</span>` : A.riskUnit === u && u.mold > 0.3 ? `<span class="chip chip--info">${L("Seurannassa", "Monitoring")}</span>` : '<span class="chip chip--ok">OK</span>';
+                  const fid = A.stopped.includes(u) ? `fan-${u.serial}` : u.ventFlag ? `vent-${u.serial}` : null;
+                  const st = fid ? fState(site, fid).status : null;
+                  const chip = A.stopped.includes(u) && st === "open" ? `<span class="chip chip--alert">${L("Puhallin seis", "Fan stopped")}</span>`
+                    : u.ventFlag && st === "open" ? `<span class="chip chip--warn">${L("Kesäohjaus", "Summer control")}</span>`
+                    : st === "ordered" ? `<span class="chip chip--warn">${L("Työtilaus", "Work order")}</span>` : '<span class="chip chip--ok">OK</span>';
+                  const lastY = u.ventYears[u.ventYears.length - 1];
                   return `<tr class="is-clickable ${u.name === ui.unit ? "is-selected" : ""}" data-unit="${esc(u.name)}">
-                    <td><b>${esc(uName(u))}</b><div class="muted" style="font-size:12px">${u.serial}</div></td><td>${chip}</td>
-                    <td class="r num" style="${u.on < 60 ? `color:${LEVEL_DARK.alert};font-weight:700` : ""}">${n0(u.on)} %</td>
-                    <td class="r num">${n1(u.rhInMean)} %</td><td class="r num">${n0(u.rhIn90)} %</td>
+                    <td><b>${esc(uName(u))}</b><div class="muted" style="font-size:12px">${u.serial}</div></td><td>${badge(unitClass(site, u), "rclass--sm")}</td><td>${chip}</td>
+                    <td class="r num" style="${u.on < 60 ? "color:#A3141C;font-weight:700" : ""}">${n0(u.on)} %</td>
+                    <td class="r num">${lastY ? `${n0(lastY.benefit)} %` : "–"}</td>
+                    <td class="r num" style="${lastY && lastY.rh95 > 50 ? "font-weight:700" : ""}">${lastY ? `${n0(lastY.rh95)} %` : "–"}</td>
                     <td class="r num" style="${u.mold > 0.5 ? "font-weight:700" : ""}">${nd(u.mold, 3)}</td></tr>`;
                 }).join("")}</tbody>
               </table>
@@ -691,17 +796,29 @@
 
         <div class="stack">
           <section>
-            <div class="card__head" style="margin-bottom:12px"><h2>${L("Toimenpidelista", "Action list")}</h2><span class="caps muted">${openCount(site)} ${L("avointa", "open")}</span></div>
-            ${fs.map(findingCard).join("")}
+            <div class="card__head" style="margin-bottom:12px"><h2>${L("Havainnot ja työtilaukset", "Findings and work orders")}</h2><span class="caps muted">${openCount(site)} ${L("avointa", "open")}</span></div>
+            ${fs.map((f) => findingCard(f)).join("")}
           </section>
           <section class="card">
-            <div class="card__head"><h2>${site.newBuild ? L("Rakennuskosteuden kuivuminen", "Construction moisture drying") : L("Rakenteen kosteus", "Structural humidity")}</h2><span class="caps">${hasSensors ? L("koko anturisto", "all sensors") : L("imurien sisäanturit", "fan indoor sensors")} · ${L("kk-ka.", "monthly mean")}</span></div>
-            <div id="dry-chart"></div>
+            <div class="card__head"><h2>${L("Takuusopimus", "Guarantee contract")}</h2><span class="caps">${site.pilot ? L("pilotti · VILPEn oma katto", "pilot · VILPE's own roof") : L("10 v", "10 yrs")}</span></div>
+            <table class="profile-table"><tbody>
+              <tr><th>${L("Alkanut", "Started")}</th><td>${fdate(site.contractStart)} · ${L("kesto 10 v", "term 10 yrs")}</td></tr>
+              <tr><th>${L("Hinta", "Price")}</th><td>${perArea(g.price)}/${yr()} (${L("luokka", "class")} ${g.cls}) · <b>${I.money(g.fee)}/${yr()}</b></td></tr>
+              <tr><th>${L("Sisältää", "Includes")}</th><td>${L("Sense-laitteisto palveluna, jatkuva analytiikka, data-ohjattu vuositarkastus, vuotojen paikannus ja korjaus, vuosipassi", "Sense hardware as a service, continuous analytics, data-driven annual inspection, leak location and repair, annual passport")}</td></tr>
+              <tr><th>${L("Korjaukset", "Repairs")}</th><td>${L(`Korjausrahastosta enintään ${I.money(REPAIR_CAP)}/v · ${zero()} omistajalle`, `From the repair fund up to ${I.money(REPAIR_CAP)}/yr · ${zero()} to the owner`)}</td></tr>
+              <tr><th>${L("Urakoitsija", "Contractor")}</th><td>${esc(I.profile().partners[0])}</td></tr>
+              <tr><th>${L("Ei sisällä", "Excludes")}</th><td class="muted">${L("Katteen elinkaaren lopun uusiminen, suunnitteluvirheet, ulkoiset vahingot (kiinteistövakuutus)", "End-of-life roof replacement, design faults, external damage (property insurance)")}</td></tr>
+              <tr><th>${L("Kiinteistökauppa", "Property sale")}</th><td>${L("Takuu ja vuosipassi siirtyvät ostajalle", "Guarantee and annual passport transfer to the buyer")}</td></tr>
+            </tbody></table>
+          </section>
+          <section class="card">
+            <div class="card__head"><h2>${L("Rakenne vs. ulkoilma", "Structure vs. outdoor air")}</h2><span class="caps">AH g/m³ · ${L("kk-ka.", "monthly mean")}</span></div>
+            <div id="ah-chart"></div>
             <div class="legend">
-              <span class="legend__item"><span class="legend__swatch" style="background:#1A62A9"></span>RH % (${L("vasen", "left")})</span>
-              <span class="legend__item"><span class="legend__swatch" style="background:#E3530F"></span>${L("Lämpötila", "Temperature")} ${I.tempUnit()} (${L("vasen", "left")})</span>
-              <span class="legend__item"><span class="legend__swatch" style="background:#8052B1"></span>AH g/m³ (${L("oikea", "right")})</span>
+              <span class="legend__item"><span class="legend__swatch" style="background:#8052B1"></span>${hasSensors ? L("Eriste (vuotoanturit)", "Insulation (leak sensors)") : L("Rakenne (MCU-2 sisä)", "Structure (MCU-2 indoor)")}</span>
+              <span class="legend__item"><span class="legend__swatch" style="background:#2D0396"></span>${L("Ulkoilma", "Outdoor air")}</span>
             </div>
+            <p class="muted" style="font-size:12px;margin-top:8px">${L("Kuivuminen arvioidaan absoluuttisesta kosteudesta suhteessa ulkoilmaan – RH-käyrä vaihtelee vuodenaikojen mukaan.", "Drying is assessed from absolute humidity relative to outdoor air – the RH curve varies with the seasons.")}</p>
           </section>
         </div>
       </div>`;
@@ -709,16 +826,19 @@
     bindSiteSelect();
     bindSite(site);
     if (hasUnits) drawUnitChart(site);
+    ahChart($("#ah-chart"), site, 210, hasSensors ? L("Eriste", "Insulation") : L("Rakenne", "Structure"));
+  }
+
+  function ahChart(el, site, height, label) {
+    const A = analyze(site);
     const M = site.networkMonthly;
-    Charts.timeSeries($("#dry-chart"), {
-      labels: M.map((m) => m.m),
-      height: 220,
-      left: { min: 0, max: 100, ticks: 4, title: `% · ${I.tempUnit()}` },
-      right: { min: 0, max: 20, title: "g/m³" },
+    Charts.timeSeries(el, {
+      labels: A.months,
+      height,
+      left: { min: 0, max: 14, ticks: 7, title: "g/m³" },
       series: [
-        { name: "RH", values: M.map((m) => m.rh), color: "#1A62A9", type: "area", unit: "%", width: 2.5, dots: true },
-        { name: L("Lämpötila", "Temperature"), values: M.map((m) => (m.t === null ? null : Math.round(I.temp(m.t) * 10) / 10)), color: "#E3530F", unit: I.tempUnit() },
-        { name: "AH", values: M.map((m) => m.ah), color: "#8052B1", axis: "right", unit: "g/m³", dash: "4 3" },
+        { name: L("Ulkoilma", "Outdoor"), values: A.outdoorMonthly.map((v) => (v === null ? null : Math.round(v * 100) / 100)), color: "#2D0396", unit: "g/m³", width: 2, dash: "5 3" },
+        { name: label, values: M.map((m) => m.ah), color: "#8052B1", unit: "g/m³", width: 2.5, dots: true },
       ],
       tick: (_, i) => M.length <= 6 || i % 2 === 0,
       xFormat: month,
@@ -728,12 +848,12 @@
 
   function findingCard(f) {
     const st = f.state.status;
-    const stLabel = st === "ordered" ? `<span class="chip chip--warn">${L("Työtilaus", "Work order")} ${f.state.order.no}</span>` : st === "resolved" ? `<span class="chip chip--ok">${L("Korjattu", "Fixed")}</span>` : "";
+    const stLabel = st === "ordered" ? `<span class="chip chip--warn">${L("Työtilaus", "Work order")} ${f.state.order.no}</span>` : st === "resolved" ? `<span class="chip chip--ok">${L("Hoidettu", "Done")}</span>` : "";
     let actions = "";
     if (f.action && st === "open") {
-      actions = `<button class="button button--sm" data-order="${f.id}">${f.action}</button>`;
+      actions = `<button class="button button--sm" data-order="${f.id}">${f.action}</button><span class="muted" style="font-size:12px">${L(`takuun puitteissa · ${zero()} omistajalle`, `under the guarantee · ${zero()} to the owner`)}</span>`;
     } else if (f.action && st === "ordered") {
-      actions = `<span class="muted" style="font-size:13px">${esc(f.state.order.partner)} · ${L("lähetetty", "sent")} ${fdate(f.state.order.date)}</span><button class="button button--hollow button--sm" data-resolve="${f.id}">${L("Merkitse korjatuksi", "Mark as fixed")}</button>`;
+      actions = `<span class="muted" style="font-size:13px">${esc(f.state.order.partner)} · ${L("lähetetty", "sent")} ${fdate(f.state.order.date)}</span><button class="button button--hollow button--sm" data-resolve="${f.id}">${L("Merkitse hoidetuksi", "Mark as done")}</button>`;
     }
     if (f.target) actions += `<button class="link-button" style="font-size:13px" data-show="${f.id}">${L("Näytä datassa", "Show in data")}</button>`;
     return `<article class="finding finding--${st === "resolved" ? "ok" : f.level} ${st === "resolved" ? "finding--resolved" : ""}">
@@ -803,7 +923,7 @@
     canvas.height = box.height * dpr;
     const ctx = canvas.getContext("2d");
     ctx.scale(dpr, dpr);
-    const r = box.width * (site.sensors.length > 30 ? 0.065 : 0.09);
+    const r = box.width * Math.min(0.09, 0.48 / Math.sqrt(Math.max(1, site.sensors.length)));
     site.sensors.forEach((s) => {
       const v = vals[s.id];
       if (v === null || v === undefined) return;
@@ -827,27 +947,32 @@
     const A = analyze(site);
     if (ui.day >= A.lastIdx) ui.day = 0;
     $("#play").textContent = "❚❚";
-    const step = A.days.length > 200 ? 2 : 1;
     ui.playing = setInterval(() => {
       if (!$("#day")) { stopPlay(); return; }
-      ui.day = Math.min(A.lastIdx, ui.day + step);
+      ui.day = Math.min(A.lastIdx, ui.day + 2);
       updateMap(site);
       if (ui.day >= A.lastIdx) stopPlay();
-    }, A.days.length > 200 ? 45 : 90);
+    }, 45);
   }
 
   function selectSensor(site, id, scroll = false) {
     const A = analyze(site);
     ui.sensor = id;
     const s = A.sensorBy[id];
+    const th = A.thermal.find((t) => t.s === s);
     $$(".map__pin").forEach((p) => p.classList.toggle("is-selected", p.dataset.sensor === id));
-    const chip = A.anomalies.includes(s) ? `<span class="chip chip--warn" style="margin-left:6px">${L("Poikkeava", "Anomaly")}</span>` : A.offline.includes(s) ? '<span class="chip chip--alert" style="margin-left:6px">Offline</span>' : "";
+    const chips = [
+      A.anomalies.includes(s) ? `<span class="chip chip--warn">${L("Kosteuspoikkeama", "Humidity anomaly")}</span>` : "",
+      th ? `<span class="chip chip--warn">${th.kind === "cold" ? L("Kylmä reuna", "Cold edge") : L("Lämpöpoikkeama", "Thermal anomaly")}</span>` : "",
+      A.offline.includes(s) ? '<span class="chip chip--alert">Offline</span>' : "",
+    ].join(" ");
+    const fit = s.coupling !== undefined && A.thermalStats ? ` · ${L("talven lämpökytkentä", "winter thermal coupling")} b = ${nf(s.coupling, 2)} (${L("mediaani", "median")} ${nf(A.thermalStats.median, 2)})` : "";
     $("#sensor-detail").innerHTML = `<div class="sensor-detail">
       <div class="card__head" style="margin-bottom:6px">
-        <h3>${L("Anturi", "Sensor")} ${s.id} ${chip}</h3>
+        <h3>${L("Anturi", "Sensor")} ${s.id} ${chips}</h3>
         <button class="link-button" style="font-size:13px" id="close-sensor">${L("Sulje", "Close")}</button>
       </div>
-      <div class="muted" style="font-size:13px">${L("Keskiarvo", "Mean")} ${n1(s.rhMean)} % · max ${n1(s.rhMax)} % · min ${tmp(s.tMin)} · ${n0(s.n)} ${L("mittausta", "readings")} · ${L("viimeisin", "latest")} ${fdate(s.last.ts)}: ${n1(s.last.rh)} %, ${tmp(s.last.t)}</div>
+      <div class="muted" style="font-size:13px">${L("Keskiarvo", "Mean")} ${n1(s.rhMean)} % · max ${n1(s.rhMax)} % · min ${tmp(s.tMin)} · ${n0(s.n)} ${L("mittausta", "readings")}${fit}</div>
       <div id="sensor-chart" style="margin-top:10px"></div>
       <div class="legend">
         <span class="legend__item"><span class="legend__swatch" style="background:#EA4840"></span>${L("Tämä anturi, RH %", "This sensor, RH %")}</span>
@@ -888,14 +1013,14 @@
     const markers = [];
     if (A.stopped.includes(u)) {
       const i = u.days.findIndex((d) => d.d >= u.alertDay);
-      if (i >= 0) markers.push({ index: i, label: L("Sense+ olisi hälyttänyt", "Sense+ would have alerted"), color: "#E2202C" });
+      if (i >= 0) markers.push({ index: i, label: L("Takuussa havaittu 48 h:ssa", "Caught within 48 h under guarantee"), color: "#E2202C" });
     }
     wrap.innerHTML = `
       <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
         <div class="mold"><div><b class="num">${nd(u.mold, 5)}</b><span>${L("Homeindeksi", "Mould index")}</span></div></div>
         <div>
           <h3>${esc(uName(u))} – ${L("olosuhteet ja puhallusteho", "conditions and fan output")}</h3>
-          <p class="muted" style="font-size:14px;margin-top:4px">${purposeLabel(u.purpose)} · ${u.serial} · ${L(`puhallin käynnissä ${n0(u.on)} % ajasta`, `fan running ${n0(u.on)} % of the time`)}${u.rpmMean ? L(`, keskimäärin ${n0(u.rpmMean)} rpm käydessään`, `, ${n0(u.rpmMean)} rpm on average when running`) : ""}</p>
+          <p class="muted" style="font-size:14px;margin-top:4px">${purposeLabel(u.purpose)} · ${u.serial} · ${L(`puhallin käynnissä ${n0(u.on)} % ajasta`, `fan running ${n0(u.on)} % of the time`)}${u.ventYears.length ? L(` · kesän tuuletuksen hyöty ${u.ventYears.map((v) => `${v.y}: ${n0(v.benefit)} %`).join(", ")}`, ` · summer ventilation benefit ${u.ventYears.map((v) => `${v.y}: ${n0(v.benefit)} %`).join(", ")}`) : ""}</p>
         </div>
       </div>
       <div id="unit-chart"></div>
@@ -909,7 +1034,7 @@
       height: 230,
       left: { min: 0, max: 100, ticks: 4, title: "RH %" },
       right: { min: 0, max: 3000, title: "rpm" },
-      bands: [{ from: 90, to: 100, color: "rgba(226,32,44,.08)", label: "RH > 90 %" }],
+      bands: [{ from: 95, to: 100, color: "rgba(226,32,44,.08)", label: "RH > 95 %" }],
       series: [
         { name: L("Puhallin", "Fan"), values: u.days.map((d) => d.rpm), color: "#ADC3F4", type: "bar", axis: "right", unit: "rpm" },
         { name: L("Ulkoilman RH", "Outdoor RH"), values: u.days.map((d) => d.rhOut), color: "#4EACE8", unit: "%", width: 1.2 },
@@ -935,7 +1060,7 @@
     }
   }
 
-  // ---------- Modaali ja työtilaus ----------
+  // ---------- Modaali ja työtilaus urakoitsijalle ----------
   function openModal(html) {
     const modal = $("#modal");
     $(".modal__panel", modal).innerHTML = html;
@@ -949,24 +1074,25 @@
 
   function openOrder(site, id) {
     const f = findings(site).find((x) => x.id === id);
+    const g = guarantee(site);
     const isUnit = f.target.type === "unit";
-    const P = I.profile();
-    const partners = [...P.partners.map((p) => `${p} · ${L("VILPE-kumppani", "VILPE partner")}`), L("Kohteen oma huoltoyhtiö", "Building's own maintenance company")];
-    const defaultPartner = I.country === "FI" && site.city === "Vantaa" ? 1 : 0;
+    const partners = I.profile().partners.map((p) => `${p} · ${L("sertifioitu Sense-urakoitsija", "certified Sense contractor")}`);
+    const urgencies = [L("Kiireellinen – 48 h", "Urgent – 48 h"), L("Normaali – 14 vrk", "Normal – 14 days"), L("Seuraava vuositarkastus", "Next annual inspection")];
+    const defUrg = f.level === "alert" ? 0 : f.kind === "thermal" ? 2 : 1;
     openModal(`
       <div class="modal__head"><h2 id="modal-title">${f.action}</h2><button class="modal__close" data-close aria-label="${L("Sulje", "Close")}">×</button></div>
       <form class="modal__body" id="order-form">
-        <div class="form-row"><span class="label">${L("Kohde", "Site")}</span><div class="value"><b>${esc(site.name)}</b></div></div>
+        <div class="guarantee-note">✓ ${L(`Hoidetaan takuun puitteissa – ${zero()} omistajalle.`, `Handled under the guarantee – ${zero()} to the owner.`)} ${f.cost ? L(`Kustannusarvio ${I.money(f.cost)} korjausrahastosta (saldo ${I.money(g.balance)}).`, `Cost estimate ${I.money(f.cost)} from the repair fund (balance ${I.money(g.balance)}).`) : L("Sisältyy vuositarkastukseen.", "Included in the annual inspection.")}</div>
+        <div class="form-row"><span class="label">${L("Kohde", "Site")}</span><div class="value"><b>${esc(site.name)}</b> · ${area(site.m2)}</div></div>
         <div class="form-row"><span class="label">${L("Havainto", "Finding")}</span><div class="value">${esc(f.title)}</div></div>
-        <div class="form-row"><label for="partner">${esc(I.roleShort("contractor"))}</label><select id="partner">${partners.map((p, i) => `<option ${i === defaultPartner ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
-        <div class="form-row"><label for="urgency">${L("Kiireellisyys", "Urgency")}</label><select id="urgency"><option ${f.level === "alert" ? "selected" : ""}>${L("Kiireellinen – 3 arkipäivää", "Urgent – 3 working days")}</option><option ${f.level === "alert" ? "" : "selected"}>${L("Normaali – 14 vrk", "Normal – 14 days")}</option></select></div>
+        <div class="form-row"><label for="partner">${esc(I.roleShort("contractor"))}</label><select id="partner">${partners.map((p) => `<option>${esc(p)}</option>`).join("")}</select></div>
+        <div class="form-row"><label for="urgency">${L("Kiireellisyys", "Urgency")}</label><select id="urgency">${urgencies.map((u, i) => `<option ${i === defUrg ? "selected" : ""}>${u}</option>`).join("")}</select></div>
         <div class="form-row"><label for="desc">${L("Kuvaus", "Description")}</label><textarea id="desc" rows="5">${f.orderText}</textarea></div>
         <div class="form-row"><span class="label">${L("Liitteet", "Attachments")}</span><div class="attach">
-          <span>📎 ${isUnit ? L("Kosteuskartta ja laitteen sijainti", "Humidity map and unit location") : L("Kosteuskartta ja anturin sijainti", "Humidity map and sensor location")}</span>
-          <span>📎 ${isUnit ? L("Aikasarja rpm + sisä/ulko RH (CSV)", "Time series rpm + indoor/outdoor RH (CSV)") : L("Aikasarja RH vs. naapurit (CSV)", "Time series RH vs. neighbours (CSV)")}</span>
-          <span>📎 ${L("Sense+-analyysin perustelu ja laitetiedot", "Sense+ analysis rationale and device details")}</span>
+          <span>📎 ${isUnit ? L("Kattokartta ja laitteen sijainti", "Roof map and unit location") : L("Kattokartta ja anturien sijainnit", "Roof map and sensor locations")}</span>
+          <span>📎 ${L("Aikasarjat ja Sense+-analyysin perustelu (CSV)", "Time series and Sense+ analysis rationale (CSV)")}</span>
         </div></div>
-        <div class="form-row"><span class="label">${L("Tilaaja", "Ordered by")}</span><div class="value">${DEMO_USER} · ${esc(I.role("manager"))} · ${L("laskutus", "billed to")}: ${esc(I.roleShort("owner"))}</div></div>
+        <div class="form-row"><span class="label">${L("Tilaaja", "Ordered by")}</span><div class="value">${DEMO_USER} · ${esc(I.role("manager"))} · ${L("maksaja: korjausrahasto", "paid by: repair fund")}</div></div>
       </form>
       <div class="modal__foot">
         <button class="button button--hollow" data-close>${L("Peruuta", "Cancel")}</button>
@@ -974,8 +1100,8 @@
       </div>`);
     $("#send-order").addEventListener("click", () => {
       state.orders += 1;
-      const urgent = $("#urgency").selectedIndex === 0;
-      const order = { no: `TT-2026-${String(140 + state.orders).padStart(4, "0")}`, partner: $("#partner").value.split(" · ")[0], date: TODAY_ISO, urgent };
+      const urgency = $("#urgency").selectedIndex;
+      const order = { no: `TT-2026-${String(140 + state.orders).padStart(4, "0")}`, partner: $("#partner").value.split(" · ")[0], date: TODAY_ISO, urgency };
       siteFindings(site)[id] = { status: "ordered", order };
       save();
       openModal(`
@@ -983,8 +1109,8 @@
         <div class="modal__body success">
           <div class="success__icon">✓</div>
           <h2>${order.no}</h2>
-          <p class="muted" style="margin-top:8px">${L(`${esc(order.partner)} sai tilauksen datan, kartan ja kuvauksen kanssa.`, `${esc(order.partner)} received the order with data, map and description.`)}<br>${urgent ? L("Kiireellinen – 3 arkipäivää", "Urgent – 3 working days") : L("Normaali – 14 vrk", "Normal – 14 days")}. ${L("Kuittaus tulee yleensä 24 tunnin sisällä.", "Confirmation usually arrives within 24 hours.")}</p>
-          <p style="margin-top:14px;font-size:14px">${L("Kun urakoitsija kirjaa korjauksen, Health Score päivittyy ja tapahtuma tallentuu Kosteuspassin historiaan.", "When the contractor logs the repair, the Health Score updates and the event is stored in the Moisture Passport history.")}</p>
+          <p class="muted" style="margin-top:8px">${L(`${esc(order.partner)} sai tilauksen kartan ja datan kanssa.`, `${esc(order.partner)} received the order with map and data.`)}<br>${urgencies[urgency]}.</p>
+          <p style="margin-top:14px;font-size:14px">${L("Omistajan ei tarvitse tehdä mitään. Kun urakoitsija kirjaa toimenpiteen, riskiluokka päivittyy ja tapahtuma tallentuu vuosipassiin.", "The owner does not need to do anything. When the contractor logs the work, the risk class updates and the event is recorded in the annual passport.")}</p>
         </div>
         <div class="modal__foot"><button class="button" data-close>${L("Valmis", "Done")}</button></div>`);
       route();
@@ -996,18 +1122,17 @@
     siteFindings(site)[id] = { ...f, status: "resolved", resolved: TODAY_ISO };
     save();
     route();
-    toast(L(`Korjaus kirjattu – Health Score nyt ${health(site).score}.`, `Repair logged – Health Score is now ${health(site).score}.`));
+    const r = risk(site);
+    toast(L(`Toimenpide kirjattu – riskiluokka nyt ${r.cls} (${r.score}).`, `Work logged – risk class now ${r.cls} (${r.score}).`));
   }
 
-  // ---------- Kosteuspassi ----------
+  // ---------- Vuosipassi ----------
   const passUses = () => ({
-    kauppa: I.country === "FI"
-      ? L("Kiinteistökauppa – liite myynti-ilmoitukseen ja isännöitsijäntodistukseen", "Property sale – attachment to the listing and the property manager's certificate")
-      : L("Kiinteistökauppa – liite myynti-ilmoitukseen ja kauppa-asiakirjoihin", "Property sale – attachment to the listing and sale documents"),
-    vakuutus: L("Vakuutuksen uusiminen – riskitason todentaminen", "Insurance renewal – proof of risk level"),
-    luovutus: L("Luovutus – rakennuskosteuden kuivumisen todentaminen", "Handover – proof that construction moisture has dried out"),
+    vuosi: L("Vuositodistus – takuun vuosikatsaus omistajalle", "Annual certificate – guarantee year in review for the owner"),
+    kauppa: L("Kiinteistökauppa – takuu ja passi siirtyvät ostajalle", "Property sale – guarantee and passport transfer to the buyer"),
+    luovutus: L("Luovutus – takuu alkaa todistetusti kuivasta katosta", "Handover – the guarantee starts from a verified dry roof"),
   });
-  let passUse = "kauppa";
+  let passUse = "vuosi";
 
   function hash(str) {
     let h = 0x811c9dc5;
@@ -1018,20 +1143,23 @@
   function renderPass(site) {
     const A = analyze(site);
     const P = I.profile();
-    const grade = passGrade(site);
-    const fs = actionable(site);
+    const g = guarantee(site);
+    const fs = findings(site);
+    const act = fs.filter((f) => f.action);
     const uses = passUses();
-    const code = hash(JSON.stringify([site.id, A.sensors.length, A.units.length, A.days[0], A.days[A.lastIdx], A.safeShare, A.maxMold, fs.map((f) => f.state.status)]));
+    const code = hash(JSON.stringify([site.id, A.sensors.length, A.units.length, A.days[0], A.days[A.lastIdx], g.score, act.map((f) => f.state.status)]));
     const passId = `${site.id.slice(0, 3).toUpperCase()}-${code.slice(0, 4)}-${code.slice(4)}`;
     const url = `https://sense.vilpe.com/passi/${passId}`;
+    const drying = fs.find((f) => f.id === "drying");
     const items = [];
-    if (site.newBuild) items.push(["ok", L(`Rakennuskosteus kuivunut: katon RH ${n1(A.firstMonth.rh)} % → ${n1(A.driest.rh)} % (${month(A.driest.m)})`, `Construction moisture dried out: roof RH ${n1(A.firstMonth.rh)} % → ${n1(A.driest.rh)} % (${month(A.driest.m)})`)]);
-    else items.push(["ok", L(`Rakenteen kosteus normaalilla tasolla: ${n1(A.driest.rh)}–${n1(A.wettest.rh)} % (kk-ka.), vaihtelu seuraa vuodenaikoja`, `Structural humidity at a normal level: ${n1(A.driest.rh)}–${n1(A.wettest.rh)} % (monthly mean), varying with the seasons`)]);
-    if (A.maxMold !== null) items.push(["ok", L(`Homeindeksi enintään ${n1(A.maxMold)} (hälytysraja 2,5)`, `Mould index at most ${n1(A.maxMold)} (alert limit 2.5)`) + (A.riskUnit && A.riskUnit.mold > 0.3 ? L(` – ${uName(A.riskUnit).toLowerCase()} seurannassa`, ` – ${uName(A.riskUnit).toLowerCase()} being monitored`) : "")]);
-    items.push(["ok", `${pct(A.safeShare)} % ${safeLabel(A)}`]);
-    fs.forEach((f) => {
+    if (drying) items.push(["ok", `${drying.title}. ${drying.text}`]);
+    const roofUnits = A.units.filter((u) => !/alapohja|ryömintä/i.test(`${u.name} ${u.purpose}`));
+    if (roofUnits.length) items.push(["ok", L(`Homeindeksi katolla enintään ${nf(Math.max(...roofUnits.map((u) => u.mold)), 2)} (raja 2,5)`, `Mould index on the roof at most ${nf(Math.max(...roofUnits.map((u) => u.mold)), 2)} (limit 2.5)`)]);
+    if (A.fanUptime !== null) items.push(["ok", L(`Kosteudenhallinnan käyntiaste ${n0(A.fanUptime)} %`, `Humidity control running ${n0(A.fanUptime)} % of the time`)]);
+    if (A.sensorAvailability !== null) items.push(["ok", L(`Anturien käytettävyys ${n0(A.sensorAvailability)} %`, `Sensor availability ${n0(A.sensorAvailability)} %`)]);
+    act.forEach((f) => {
       if (f.state.status === "resolved") items.push(["ok", `${f.passDone} ${fdate(f.state.resolved)}`]);
-      else items.push(["warn", `${f.passOpen} – ${f.state.status === "ordered" ? L("korjaus tilattu", "repair ordered") : L("avoin", "open")}`]);
+      else items.push(["warn", `${f.passOpen}${f.state.status === "ordered" ? ` – ${L("työtilaus käynnissä", "work order in progress")}` : ""}`]);
     });
     const devices = [A.sensors.length ? L(`${A.sensors.length} vuotoanturia`, `${A.sensors.length} leak sensors`) : "", A.units.length ? L(`${A.units.length} kosteudenhallintayksikköä`, `${A.units.length} humidity control units`) : ""].filter(Boolean);
 
@@ -1049,24 +1177,24 @@
       <article class="doc">
         <header class="doc__head">
           <div>
-            <div class="caps" style="color:#E3530F">VILPE Sense+ ${L("Kosteuspassi", "Moisture Passport")}${A.fullYear ? "" : ` · ${L("väliraportti", "interim report")}`}</div>
+            <div class="caps" style="color:#E3530F">VILPE Sense+ ${L("Kuiva katto -takuu · vuosipassi", "Dry Roof Guarantee · annual passport")}${A.fullYear ? "" : ` · ${L("väliraportti", "interim report")}`}</div>
             <h1>${esc(site.name)}</h1>
             <p>${uses[passUse]}</p>
           </div>
           <img src="assets/vilpe-logo.svg" alt="VILPE">
         </header>
         <div class="doc__body">
-          ${A.fullYear ? "" : `<div class="notice">${L(`Seuranta alkoi ${fdate(A.days[0])}. Täysi Kosteuspassi myönnetään 12 kuukauden seurannan jälkeen – tämä väliraportti kattaa ${A.days.length} vrk.`, `Monitoring started ${fdate(A.days[0])}. A full Moisture Passport is issued after 12 months of monitoring – this interim report covers ${A.days.length} days.`)}</div>`}
+          ${A.fullYear ? "" : `<div class="notice">${L(`Seuranta alkoi ${fdate(A.days[0])}. Tämä väliraportti kattaa ${A.days.length} vrk.`, `Monitoring started ${fdate(A.days[0])}. This interim report covers ${A.days.length} days.`)}</div>`}
           <section class="doc__section">
             <div class="grade">
-              <div class="grade__big" style="background:${GRADE_COLORS[grade]}">${grade}</div>
-              <div class="grade__scale" aria-label="${L("Kosteusluokka", "Moisture class")}">
-                ${["A", "B", "C", "D", "E"].map((g, i) => `<div class="grade__step ${g === grade ? "is-active" : ""}" style="background:${GRADE_COLORS[g]};width:${55 + i * 11}%">${g}</div>`).join("")}
+              <div class="grade__big" style="background:${CLASS_COLOR[g.cls]}">${g.cls}</div>
+              <div class="grade__scale" aria-label="${L("Riskiluokka", "Risk class")}">
+                ${["A", "B", "C", "D", "E"].map((c, i) => `<div class="grade__step ${c === g.cls ? "is-active" : ""}" style="background:${CLASS_COLOR[c]};width:${62 + i * 9}%">${c}${CLASS_PRICE[c] ? ` · ${perArea(CLASS_PRICE[c])}` : ""}</div>`).join("")}
               </div>
               <div style="flex:1;min-width:220px">
-                <div class="caps muted">${L("Kosteusluokka", "Moisture class")}${A.fullYear ? "" : ` (${L("alustava", "preliminary")})`}</div>
-                <h2 class="plain" style="font-size:24px;margin:4px 0 8px">${grade === "A" ? L("Koko seurantajakso turvallisella alueella", "Safe throughout the monitoring period") : L("Turvallinen, havaintoja korjattavana", "Safe, with findings to fix")}</h2>
-                <p style="font-size:14px">${grade === "A" ? L("Havaitut poikkeamat on korjattu ja korjausten jälkeinen tila todennettu datalla.", "Detected anomalies have been fixed and the post-repair state verified with data.") : L("Kun avoimet havainnot on korjattu, kohde nousee luokkaan A.", "Once the open findings are fixed, the site rises to class A.")}</p>
+                <div class="caps muted">${L("Riskiluokka", "Risk class")} · ${g.score}/100</div>
+                <h2 class="plain" style="font-size:24px;margin:4px 0 8px">${classText(g.cls)}</h2>
+                <p style="font-size:14px">${openCount(site) ? L("Toimenpiteiden jälkeen luokka paranee → takuuhinta laskee.", "After the actions the class improves → the guarantee price falls.") : L("Kaikki havainnot hoidettu. Hyvin hoidettu katto halpenee.", "All findings handled. A well-kept roof gets cheaper.")}</p>
               </div>
             </div>
           </section>
@@ -1074,33 +1202,37 @@
             <div class="facts">
               <div><b class="num">${fdate(A.days[0])}–<br>${fdate(A.days[A.lastIdx])}</b><span>${L("seurantajakso", "monitoring period")}</span></div>
               <div><b class="num">${A.sensors.length} + ${A.units.length}</b><span>${devices.join(" + ")}</span></div>
-              <div><b class="num">${n0(A.measurements)}</b><span>${L("mittausta", "readings")}</span></div>
-              <div><b class="num">${n0(A.fanUptime !== null ? A.fanUptime : A.sensorAvailability)} %</b><span>${A.fanUptime !== null ? L("kosteudenhallinnan toiminta-aste", "humidity control uptime") : L("anturien käytettävyys", "sensor availability")}</span></div>
+              <div><b class="num">${area(site.m2)}</b><span>${L("katto takuun piirissä", "roof under guarantee")}</span></div>
+              <div><b class="num">${I.money(g.fee)}</b><span>${L(`takuumaksu/v (${perArea(g.price)})`, `guarantee fee/yr (${perArea(g.price)})`)}</span></div>
             </div>
           </section>
           <section class="doc__section">
-            <h2>${L("Havainnot", "Findings")}</h2>
+            <h2>${L("Havainnot ja toimenpiteet", "Findings and actions")}</h2>
             <ul class="checklist">${items.map(([k, t]) => `<li><span class="${k}">${k === "ok" ? "✔" : "⚠"}</span><span>${t}</span></li>`).join("")}</ul>
           </section>
           <section class="doc__section grid grid--2" style="gap:28px">
             <div>
-              <h2>${site.newBuild ? L("Kuivumiskäyrä", "Drying curve") : L("Kosteushistoria", "Humidity history")}</h2>
+              <h2>${L("Kuivuminen: rakenne vs. ulkoilma", "Drying: structure vs. outdoor air")}</h2>
               <div id="pass-chart"></div>
             </div>
             <div>
-              <h2>${L("Mittauskattavuus", "Measurement coverage")}</h2>
+              <h2>${L("Mittauskattavuus ja löydökset", "Coverage and findings")}</h2>
               <div class="mini-map">
                 <img src="${site.roof.src}" alt="${L("Laitteiden sijainnit katolla", "Device locations on the roof")}">
-                ${A.sensors.map((s) => `<i style="left:${s.pos[0] * 100}%;top:${s.pos[1] * 100}%"></i>`).join("")}
+                ${A.sensors.map((s) => `<i class="${A.thermal.some((t) => t.s === s) ? "t" : ""}" style="left:${s.pos[0] * 100}%;top:${s.pos[1] * 100}%"></i>`).join("")}
                 ${A.units.filter((u) => u.pos).map((u) => `<i class="u" style="left:${u.pos[0] * 100}%;top:${u.pos[1] * 100}%"></i>`).join("")}
               </div>
-              <p class="muted" style="font-size:12px;margin-top:6px">${A.sensors.length ? `● ${L("vuotoanturi", "leak sensor")} (~10 / ${n0(I.area(200))} ${I.areaUnit()}) &nbsp; ` : ""}${A.units.length ? `◆ ${L("kosteudenhallintayksikkö", "humidity control unit")}` : ""}</p>
+              <p class="muted" style="font-size:12px;margin-top:6px">${A.sensors.length ? `● ${L("vuotoanturi", "leak sensor")} &nbsp; <span style="color:#E3530F">●</span> ${L("lämpöpoikkeama", "thermal anomaly")} &nbsp; ` : ""}${A.units.length ? `◆ ${L("kosteudenhallintayksikkö", "humidity control unit")}` : ""}</p>
             </div>
           </section>
           <section class="doc__section">
-            <h2>${L("Säädöskytkentä", "Regulatory link")} · ${esc(I.pick(P.name))}</h2>
-            <p style="font-size:14px">${esc(I.pick(P.regulation))}.</p>
-            <p class="muted" style="font-size:13px;margin-top:6px">${esc(I.pick(P.extra))}</p>
+            <h2>${L("Takuu", "Guarantee")}</h2>
+            <ul class="checklist" style="font-size:14px">
+              <li><span class="ok">✔</span><span>${L(`Voimassa ${fdate(site.contractStart)} alkaen, 10 v · urakoitsija ${esc(P.partners[0])}`, `Valid from ${fdate(site.contractStart)}, 10 yrs · contractor ${esc(P.partners[0])}`)}</span></li>
+              <li><span class="ok">✔</span><span>${L("Siirrettävissä uudelle omistajalle kiinteistökaupassa", "Transferable to a new owner in a property sale")}</span></li>
+              <li><span class="ok">✔</span><span>${L(`Korjaukset rahastosta enintään ${I.money(REPAIR_CAP)}/v; kauden toimenpiteet ${I.money(g.used)}`, `Repairs from the fund up to ${I.money(REPAIR_CAP)}/yr; this period's work ${I.money(g.used)}`)}</span></li>
+            </ul>
+            <p class="muted" style="font-size:13px;margin-top:10px">${L("Takuun kytkentä", "Guarantee link")} · ${esc(I.pick(P.name))}: ${esc(I.pick(P.link))}</p>
           </section>
           <section class="doc__section">
             <h2>${L("Varmennus", "Verification")}</h2>
@@ -1110,13 +1242,13 @@
                 <div class="caps muted">${L("Passin tunniste", "Passport ID")}</div>
                 <b style="font-size:18px" class="num">${passId}</b>
                 <p style="margin-top:6px">${L("Tarkista aitous", "Verify authenticity")}: <span style="color:#004F9F">${url.replace("https://", "")}</span></p>
-                <p class="muted" style="margin-top:4px;font-size:13px">${L(`Generoitu ${fdate(today)} suoraan VILPE Sense -pilven mittausdatasta${site.real ? "" : " (demossa simuloitu)"}. Tietoja ei voi muokata jälkikäteen.`, `Generated ${fdate(today)} directly from VILPE Sense cloud measurement data${site.real ? "" : " (simulated in the demo)"}. The data cannot be edited afterwards.`)}</p>
+                <p class="muted" style="margin-top:4px;font-size:13px">${L(`Generoitu ${fdate(today)} VILPE Sense -pilven mittausdatasta${site.real ? "" : " (demossa simuloitu)"}. Tietoja ei voi muokata jälkikäteen.`, `Generated ${fdate(today)} from VILPE Sense cloud measurement data${site.real ? "" : " (simulated in the demo)"}. The data cannot be edited afterwards.`)}</p>
               </div>
             </div>
           </section>
         </div>
         <footer class="doc__foot">
-          <span>${L("Mittausraportti, ei takuu rakenteen kunnosta. Varmennus koskee datan aitoutta.", "A measurement report, not a guarantee of the structure's condition. Verification covers the authenticity of the data.")}</span>
+          <span>${L("Passi on mittausraportti; takuu on erillinen sopimus.", "The passport is a measurement report; the guarantee is a separate contract.")}</span>
           <span>${L("Data omistajan luvalla", "Data with the owner's consent")} · VILPE Oy, Mustasaari</span>
         </footer>
       </article>`;
@@ -1131,356 +1263,189 @@
     $("#copy-link").addEventListener("click", async () => {
       try { await navigator.clipboard.writeText(url); toast(L("Jakolinkki kopioitu leikepöydälle.", "Share link copied to the clipboard.")); } catch (e) { toast(url); }
     });
-    const M = site.networkMonthly;
-    Charts.timeSeries($("#pass-chart"), {
-      labels: M.map((m) => m.m),
-      height: 190,
-      left: { min: 0, max: 100, ticks: 4, title: "RH %" },
-      series: [{ name: L("Rakenteen RH", "Structural RH"), values: M.map((m) => m.rh), color: "#1A62A9", type: "area", unit: "%", width: 2.5, dots: true }],
-      tick: (_, i) => M.length <= 6 || i % 3 === 0,
-      xFormat: month,
-      tipTitle: month,
-    });
+    ahChart($("#pass-chart"), site, 190, L("Rakenne", "Structure"));
   }
 
-  // ---------- Vakuutusnäkymä ----------
-  function riskClass(score) {
-    if (score >= 85) return [1, L("Erittäin matala", "Very low")];
-    if (score >= 75) return [2, L("Matala", "Low")];
-    if (score >= 55) return [3, L("Kohtalainen", "Moderate")];
-    if (score >= 40) return [4, L("Kohonnut", "Elevated")];
-    return [5, L("Korkea", "High")];
-  }
-
-  function timelineEvents(site) {
-    const A = analyze(site);
-    const ev = site.events.map((e) => ({ ...e, t: L(e.t, e.tEn || e.t) }));
-    A.stopped.forEach((u) => {
-      const n = uName(u);
-      ev.push({ d: u.alertDay, cls: "alert", t: L(`${n}: puhallin pysähtyi – Sense+ laitevalvonta olisi hälyttänyt`, `${n}: fan stopped – Sense+ device monitoring would have alerted`) });
-      const peakMonth = u.months.filter((m) => m.m >= u.stopFrom.slice(0, 7) && m.m <= u.stopTo.slice(0, 7)).reduce((a, b) => (b.rhIn > a.rhIn ? b : a));
-      ev.push({ d: `${peakMonth.m}-15`, cls: "warn", t: L(`${n}: rakenteen RH ${n0(peakMonth.rhIn)} % (kk-ka.) ilman tuuletusta`, `${n}: structural RH ${n0(peakMonth.rhIn)} % (monthly mean) without ventilation`) });
-      if (!u.ongoing) ev.push({ d: u.stopTo, cls: "info", t: L(`${n}: puhallin käynnistyi uudelleen${u.on < 50 ? " (toiminta yhä vajaata)" : ""}`, `${n}: fan restarted${u.on < 50 ? " (still underperforming)" : ""}`) });
-    });
-    A.anomalies.forEach((s) => {
-      const valid = (arr) => arr.filter((x) => x !== null);
-      const rDay = A.days[s.rh.indexOf(Math.max(...valid(s.rh)))];
-      if (s.tAnomalyDays) ev.push({ d: A.days[s.t.indexOf(Math.min(...valid(s.t)))], cls: "warn", t: L(`Anturi ${s.id}: lämpötila ${tmp(s.tMin)}, selvä poikkeama naapureista`, `Sensor ${s.id}: temperature ${tmp(s.tMin)}, a clear deviation from neighbours`) });
-      ev.push({ d: rDay, cls: "warn", t: L(`Anturi ${s.id}: RH ${n1(s.rhMax)} %, tarkastuskohde`, `Sensor ${s.id}: RH ${n1(s.rhMax)} %, flagged for inspection`) });
-    });
-    A.offline.forEach((s) => ev.push({ d: addDays(s.last.ts.slice(0, 10), 2), cls: "warn", t: L(`Anturi ${s.id}: yhteys katkennut (ei mittausta yli 36 h)`, `Sensor ${s.id}: connection lost (no reading for over 36 h)`) }));
-    if (site.real) ev.push({ d: TODAY_ISO, cls: "info", t: L("Sense+ Care otettu käyttöön, omistaja antoi suostumuksen datan jakoon", "Sense+ Care activated, owner consented to data sharing") });
-    actionable(site).forEach((f) => {
-      if (f.state.order) ev.push({ d: TODAY_ISO, cls: "info", t: L(`Työtilaus ${f.state.order.no} → ${f.state.order.partner}: ${f.title}`, `Work order ${f.state.order.no} → ${f.state.order.partner}: ${f.title}`) });
-      if (f.state.status === "resolved") ev.push({ d: TODAY_ISO, cls: "ok", t: L(`Korjaus kirjattu: ${f.title}`, `Repair logged: ${f.title}`) });
-    });
-    return ev.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
-  }
-
-  function renderInsurer(site) {
-    const A = analyze(site);
-    const h = health(site);
-    const [rc, rcText] = riskClass(h.score);
-    const fs = actionable(site);
-    const reacted = fs.filter((f) => f.state.status !== "open").length;
-    const discount = openCount(site) === 0 ? "10 %" : reacted ? `${n1(7.5)} %` : "5 %";
-    const consent = state.consent[site.id] !== false;
+  // ---------- Vakuuttajan näkymä (vaihe 2) ----------
+  function renderInsurer() {
+    const rows = allSites().map((s) => ({ s, g: guarantee(s), consent: state.consent[s.id] !== false }));
+    const shared = rows.filter((r) => r.consent);
+    const m2 = shared.reduce((a, r) => a + r.s.m2, 0);
+    const fund = shared.reduce((a, r) => a + r.g.fund, 0);
+    const used = shared.reduce((a, r) => a + r.g.used, 0);
+    const byClass = Object.fromEntries("ABCDE".split("").map((c) => [c, shared.filter((r) => r.g.cls === c).reduce((a, r) => a + r.s.m2, 0)]));
     view.innerHTML = `
       <div class="page-head">
         <div>
-          <div class="caps muted">Partner API · ${esc(I.role("insurer"))}</div>
-          <h1>${L("Riskinarvio", "Risk assessment")}: ${esc(site.name)}</h1>
-          <p>${L("Näin vakuutusyhtiö näkee kohteen – vain sen, mihin omistaja on antanut luvan.", "This is how the insurer sees the site – only what the owner has consented to.")}</p>
+          <div class="caps muted">${L("Riskinkantaja · vaihe 2", "Risk bearer · phase 2")} · ${esc(I.role("insurer"))}</div>
+          <h1>${L("Vakuuttajan näkymä", "Insurer view")}</h1>
+          <p>${L("Hinnoiteltava kattoriski: riskiluokkajakauma ja korjauskulut suhteessa rahastoon. Vakuuttaja näkee vain kohteet, joiden omistaja on antanut suostumuksen.", "Priceable roof risk: risk class distribution and repair costs against the fund. The insurer only sees sites whose owner has consented.")}</p>
         </div>
-        <div class="button-row">${siteSelect(site, "vakuutus")}</div>
       </div>
-      <div class="consent ${consent ? "" : "consent--off"}">
-        <div>
-          <b>${consent ? L("Omistajan suostumus voimassa", "Owner consent active") : L("Suostumus peruttu", "Consent withdrawn")} · ${esc(I.roleShort("owner"))}</b>
-          <div class="muted" style="font-size:14px">${consent ? L("Jaetaan riskiluokka, hälytykset ja toimenpidehistoria · ei raakadataa eikä henkilötietoja", "Shared: risk class, alerts and action history · no raw data or personal data") : L("Vakuuttaja ei näe kohteen tietoja. Suostumuksen voi antaa uudelleen milloin tahansa.", "The insurer cannot see the site. Consent can be given again at any time.")}</div>
-        </div>
-        <label class="switch" title="${L("Omistajan suostumus datan jakoon", "Owner consent to data sharing")}"><input type="checkbox" id="consent" ${consent ? "checked" : ""}><span></span></label>
+      <div class="summary">
+        <div><b class="num">${shared.length}/${rows.length}</b><span>${L("kohdetta jaettu (suostumus)", "sites shared (consent)")}</span></div>
+        <div><b class="num">${area(m2)}</b><span>${L("takuun piirissä", "under guarantee")}</span></div>
+        <div><b class="num">${I.money(fund)}</b><span>${L("riskiosuus / korjausrahasto vuodessa", "risk share / repair fund per year")}</span></div>
+        <div><b class="num" style="color:${used > fund ? "#A3141C" : "#157539"}">${fund ? n0((100 * used) / fund) : 0} %</b><span>${L(`korjauskulut ${I.money(used)} rahastosta`, `repair costs ${I.money(used)} of the fund`)}</span></div>
       </div>
-      ${consent ? `
-      <div class="grid grid--3">
+      <div class="grid grid--2">
         <section class="card">
-          <div class="caps muted">${L("Riskiluokka", "Risk class")}</div>
-          <div style="display:flex;align-items:baseline;gap:10px;margin-top:6px"><b style="font-size:44px">${rc}</b><span class="muted">/ 5 · ${rcText}</span></div>
-          <div class="risk">${[1, 2, 3, 4, 5].map((i) => `<i style="${i <= rc ? `background:${["#157539", "#3ADB76", "#FFAE00", "#E3530F", "#A00000"][rc - 1]}` : ""}"></i>`).join("")}</div>
-          <p class="muted" style="font-size:13px">${L(`Johdettu Roof Health Scoresta (${h.score}/100), homeindeksistä, laitteiden toimivuudesta ja avoimista poikkeamista.`, `Derived from the Roof Health Score (${h.score}/100), mould index, device health and open anomalies.`)}</p>
+          <div class="card__head"><h2>${L("Riskiluokkajakauma", "Risk class distribution")}</h2><span class="caps">${L("osuus m²:stä", "share of m²")}</span></div>
+          <div class="dist">${"ABCDE".split("").map((c) => (byClass[c] ? `<div style="flex:${byClass[c]};background:${CLASS_COLOR[c]}" title="${c}: ${area(byClass[c])}">${c}</div>` : "")).join("") || `<div style="flex:1;background:var(--vilpe-gray-300)">–</div>`}</div>
+          <table style="margin-top:14px"><tbody>${"ABCDE".split("").map((c) => `<tr><td>${badge(c, "rclass--sm")} ${classText(c)}</td><td class="r num">${area(byClass[c])}</td><td class="r num">${m2 ? n0((100 * byClass[c]) / m2) : 0} %</td><td class="r muted">${CLASS_PRICE[c] ? `${perArea(CLASS_PRICE[c])}/${yr()}` : L("ei takuuta", "no guarantee")}</td></tr>`).join("")}</tbody></table>
         </section>
         <section class="card">
-          <div class="caps muted">${L("Alennusperuste", "Discount basis")}</div>
-          <ul class="checklist" style="margin-top:10px;font-size:14px">
-            ${A.sensors.length ? `<li><span class="ok">✔</span><span>${L(`Jatkuva vuotovalvonta: ${A.sensors.length} anturia rakenteessa`, `Continuous leak monitoring: ${A.sensors.length} sensors in the structure`)}</span></li>` : ""}
-            ${A.units.length ? `<li><span class="ok">✔</span><span>${L(`Aktiivinen kosteudenhallinta: ${A.units.length} × MCU-2 + huippuimuri`, `Active humidity control: ${A.units.length} × MCU-2 + roof fan`)}</span></li>` : ""}
-            <li><span class="ok">✔</span><span>${L("Sense+ Care -laitevalvonta ja asiantuntijavarmistus", "Sense+ Care device monitoring and expert verification")}</span></li>
-            <li><span class="${reacted === fs.length ? "ok" : "warn"}">${reacted === fs.length ? "✔" : "⚠"}</span><span>${L("Hälytyksiin reagoitu", "Alerts acted on")}: ${reacted}/${fs.length}</span></li>
-            <li><span class="${passGrade(site) === "A" ? "ok" : "warn"}">${passGrade(site) === "A" ? "✔" : "⚠"}</span><span>${L("Kosteuspassi luokka", "Moisture Passport class")} ${passGrade(site)}${A.fullYear ? "" : ` (${L("alustava", "preliminary")})`}</span></li>
+          <div class="card__head"><h2>${L("Miksi riski on hinnoiteltava", "Why the risk is priceable")}</h2></div>
+          <ul class="checklist" style="font-size:14px">
+            <li><span class="ok">✔</span><span>${L(`Mittaus rakenteen sisältä: vuoto havaitaan aikaisin ja pienenä (VILPEn tehdas: ${I.money(15000)} vs. ${I.money(60000)}) [R]`, `Measurement inside the structure: leaks are caught early and small (VILPE factory: ${I.money(15000)} vs. ${I.money(60000)}) [R]`)}</span></li>
+            <li><span class="ok">✔</span><span>${L("Laitevalvonta: tuuletuksen toiminta varmistetaan 48 h:ssa (Vantaan puhallin seisoi 12 kk huomaamatta) [M]", "Device monitoring: ventilation is verified within 48 h (the Vantaa fan stood still unnoticed for 12 months) [M]")}</span></li>
+            <li><span class="ok">✔</span><span>${L("Riskiluokka päivittyy vuosittain → hinta seuraa katon kuntoa", "Risk class updates yearly → price follows roof condition")}</span></li>
+            <li><span class="ok">✔</span><span>${L(`Korjaukset rajattu: enintään ${I.money(REPAIR_CAP)}/kohde/v, aloitusluokka vähintään C`, `Repairs capped: up to ${I.money(REPAIR_CAP)}/site/yr, starting class at least C`)}</span></li>
           </ul>
-        </section>
-        <section class="card" style="background:var(--vilpe-navy);color:#fff;border-color:var(--vilpe-navy)">
-          <div class="caps" style="color:rgba(255,255,255,.7)">${L("Suositeltu vakuutusetu", "Recommended insurance benefit")}</div>
-          <b style="font-size:44px;display:block;margin-top:6px">${discount}</b>
-          <p style="font-size:14px;color:rgba(255,255,255,.8)">${L("alennus kiinteistövakuutuksesta tai pienempi omavastuu vuotovahingoissa.", "discount on the property insurance premium or a lower deductible for water damage.")}</p>
-          <p style="font-size:13px;color:rgba(255,255,255,.6);margin-top:10px">${L(`Pay-for-results: vakuuttaja maksaa VILPElle ~${I.price(75)}/kohde/v + bonuksen, jos korvauskulut laskevat.`, `Pay-for-results: the insurer pays VILPE ~${I.price(75)} per site per year + a bonus if claims costs fall.`)}</p>
+          <p class="muted" style="font-size:13px;margin-top:12px">${L("Vertailuluvut (Suomi) [R]: vuotovahinkoja ~35 000 / v, korvaukset ~171 M€, keskimääräinen vuotovahinko ~5 000 €. Vakuuttajat palkitsevat jo vuotohälyttimiä (2022: 3/9 alennus, 5/9 pienempi omavastuu).", "Reference figures (Finland) [R]: ~35,000 water-damage claims a year, ~€171M paid out, average claim ~€5,000. Insurers already reward leak alarms (2022: 3/9 discount, 5/9 lower deductible).")}</p>
         </section>
       </div>
-      <div class="grid grid--2" style="margin-top:20px">
-        <section class="card">
-          <div class="card__head"><h2>${L("Toimenpidehistoria", "Action history")}</h2><span class="caps">${L("vahingonestotoimet", "loss prevention")}</span></div>
-          <ol class="timeline">${timelineEvents(site).map((e) => `<li class="${e.cls}"><time>${fdate(e.d)}</time>${esc(e.t)}</li>`).join("")}</ol>
-        </section>
-        <section class="card">
-          <div class="card__head"><h2>${L("Riskitekijät", "Risk factors")}</h2><span class="caps">${L("Health Score -erittely", "Health Score breakdown")}</span></div>
-          <table>
-            <thead><tr><th>${L("Tekijä", "Factor")}</th><th class="r">${L("Paino", "Weight")}</th><th class="r">${L("Vähennys", "Deduction")}</th></tr></thead>
-            <tbody>
-              <tr><td>${L("Homeriski", "Mould risk")} (${L("suurin homeindeksi", "highest mould index")} ${A.maxMold === null ? "–" : n1(A.maxMold)} / ${n1(2.5)})</td><td class="r">30 %</td><td class="r num">−${n1(h.parts.mold)}</td></tr>
-              <tr><td>${L("Aika yli RH-rajan", "Time above RH limit")}</td><td class="r">25 %</td><td class="r num">−${n1(h.parts.rh)}</td></tr>
-              <tr><td>${L("Laiteviat (puhallin seis, anturi offline)", "Device faults (fan stopped, sensor offline)")}</td><td class="r">25 %</td><td class="r num">−${n1(h.parts.dev)}</td></tr>
-              <tr><td>${L("Avoimet poikkeamat", "Open anomalies")}</td><td class="r">20 %</td><td class="r num">−${n1(h.parts.ano)}</td></tr>
-              <tr><td><b>Roof Health Score</b></td><td></td><td class="r"><b class="num">${h.score}</b></td></tr>
-            </tbody>
-          </table>
-          <p class="muted" style="font-size:13px;margin-top:14px">${L("Vertailuluvut (Suomi): vuotovahinkoja ~35 000 / v, korvaukset ~171 M€, keskimääräinen vuotovahinko ~5 000 €. Jos valvonta estää yhden vahingon kymmenessä vuodessa, odotettu säästö on ~500 €/kohde/v.", "Reference figures (Finland): ~35,000 water-damage claims a year, ~€171M paid out, average claim ~€5,000. If monitoring prevents one claim in ten years, the expected saving is ~€500 per site per year.")}</p>
-        </section>
-      </div>` : `<div class="card locked"><div style="font-size:40px">🔒</div><h2 style="margin:10px 0 6px">${L("Ei pääsyä kohteen tietoihin", "No access to site data")}</h2><p>${L("Data on rakennuksen omistajan. Jako kolmansille osapuolille vain suostumuksella, ja suostumus on peruttavissa.", "The data belongs to the building owner. It is shared with third parties only with consent, which can be withdrawn.")}</p></div>`}`;
-    bindSiteSelect();
-    $("#consent").addEventListener("change", (e) => {
-      state.consent[site.id] = e.target.checked;
+      <section class="card" style="margin-top:20px">
+        <div class="card__head"><h2>${L("Kohteet", "Sites")}</h2><span class="caps">${L("suostumus omistajalta", "owner consent")}</span></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>${L("Kohde", "Site")}</th><th>${L("Luokka", "Class")}</th><th class="r">${L("Ala", "Area")}</th><th class="r">${L("Takuumaksu/v", "Fee/yr")}</th><th class="r">${L("Rahasto/v", "Fund/yr")}</th><th class="r">${L("Korjauskulut", "Repair costs")}</th><th>${L("Suostumus", "Consent")}</th></tr></thead>
+          <tbody>${rows.map(({ s, g, consent }) => `<tr>
+            <td><b>${esc(s.name)}</b><div class="muted" style="font-size:12px">${esc(s.city)}</div></td>
+            <td>${consent ? badge(g.cls, "rclass--sm") : "🔒"}</td>
+            <td class="r num">${area(s.m2)}</td>
+            <td class="r num">${consent ? I.money(g.fee) : "–"}</td>
+            <td class="r num">${consent ? I.money(g.fund) : "–"}</td>
+            <td class="r num" style="${consent && g.used > g.fund ? "color:#A3141C;font-weight:700" : ""}">${consent ? I.money(g.used) : "–"}</td>
+            <td><label class="switch" title="${L("Omistajan suostumus datan jakoon", "Owner consent to data sharing")}"><input type="checkbox" data-consent="${s.id}" ${consent ? "checked" : ""}><span></span></label></td>
+          </tr>`).join("")}</tbody>
+        </table></div>
+        <p class="muted" style="font-size:13px;margin-top:10px">${L("Data on omistajan. Riskiluokka, havainnot ja toimenpidehistoria jaetaan sopimuksen ja suostumuksen perusteella; aggregoitu ja anonymisoitu data riskimallin kehitykseen. Data säilytetään EU:ssa.", "The data belongs to the owner. Risk class, findings and action history are shared based on contract and consent; aggregated and anonymised data improves the risk model. Data is stored in the EU.")}</p>
+      </section>`;
+    $$("[data-consent]").forEach((c) => c.addEventListener("change", () => {
+      state.consent[c.dataset.consent] = c.checked;
       save();
-      renderInsurer(site);
-      toast(e.target.checked ? L("Suostumus annettu – vakuuttaja näkee riskitiedot.", "Consent given – the insurer can see risk data.") : L("Suostumus peruttu – tiedot piilotettu vakuuttajalta.", "Consent withdrawn – data hidden from the insurer."));
-    });
+      renderInsurer();
+      toast(c.checked ? L("Suostumus annettu – vakuuttaja näkee kohteen riskitiedot.", "Consent given – the insurer can see the site's risk data.") : L("Suostumus peruttu – kohde piilotettu vakuuttajalta.", "Consent withdrawn – site hidden from the insurer."));
+    }));
   }
 
-  // ---------- Hallitusraportti ----------
-  function renderReport(site) {
-    const A = analyze(site);
-    const P = I.profile();
-    const h = health(site);
-    const fs = findings(site);
-    const act = fs.filter((f) => f.action);
-    const done = act.filter((f) => f.state.status !== "open");
-    const open = openCount(site);
-    const hwc = hardware(A.sensors.length, A.units.length);
-    const monthly = hwc.haas + CARE_PRO_EUR * P.mult;
-    const pts = [...fs.filter((f) => f.pts && f.state.status !== "resolved").map((f) => f.pts), L("Uusi Kosteuspassi 12 kk kuluttua tai ennen myyntiä / vakuutuksen uusintaa.", "New Moisture Passport in 12 months or before a sale / insurance renewal.")];
-    const y0 = A.days[0].slice(0, 4);
-    const y1 = A.days[A.lastIdx].slice(0, 4);
-    const period = A.fullYear ? (y0 === y1 ? y0 : `${y0}–${y1}`) : `${month(A.days[0].slice(0, 7))} – ${month(A.days[A.lastIdx].slice(0, 7))}`;
-    view.innerHTML = `
-      <div class="doc-actions">
-        <div class="button-row">${siteSelect(site, "raportti")}</div>
-        <button class="button" id="print">${L("Tulosta / PDF", "Print / PDF")}</button>
-      </div>
-      <article class="doc">
-        <header class="doc__head">
-          <div>
-            <div class="caps" style="color:#E3530F">Sense+ Care · ${A.fullYear ? esc(I.pick(P.boardDoc)) : L("kausiraportti hallitukselle", "interim report for the board")}</div>
-            <h1>${L("Katon kosteusturva", "Roof moisture protection")} ${period}</h1>
-            <p>${esc(site.name)} · ${L(`laatinut Sense+ automaattisesti ${fdate(today)}`, `generated automatically by Sense+ on ${fdate(today)}`)}</p>
-          </div>
-          <img src="assets/vilpe-logo.svg" alt="VILPE">
-        </header>
-        <div class="doc__body">
-          <section class="doc__section" style="display:flex;gap:22px;align-items:center;flex-wrap:wrap">
-            ${gauge(h.score, 96, false, siteLevel(site, h.score))}
-            <div style="flex:1;min-width:240px">
-              <div class="caps muted">${L("Tilannekuva", "Status")}</div>
-              <h2 class="plain" style="font-size:22px;margin:4px 0 6px">${open === 0 ? L("Katto on kunnossa.", "The roof is in good condition.") : L(`Katto on pääosin kunnossa – ${open === 1 ? "yksi asia vaatii" : `${open} asiaa vaativat`} toimenpiteitä.`, `The roof is mostly in good condition – ${open === 1 ? "one issue needs" : `${open} issues need`} action.`)}</h2>
-              <p style="font-size:15px">${L("Seurannassa", "Monitored")}: ${devicesText(site)}. ${pct(A.safeShare)} % ${safeLabel(A)}. ${open ? L(`Avoimia havaintoja ${open}.`, `Open findings: ${open}.`) : L("Kaikki havainnot on korjattu.", "All findings have been fixed.")}</p>
-            </div>
-          </section>
-          <section class="doc__section">
-            <h2>${L("Kauden tärkeimmät havainnot", "Key findings of the period")}</h2>
-            <ul class="checklist">
-              ${act.map((f) => `<li><span class="${f.state.status === "resolved" ? "ok" : "warn"}">${f.state.status === "resolved" ? "✔" : "⚠"}</span><span>${f.plain}${f.state.status === "resolved" ? L(" Korjattu.", " Fixed.") : ""}</span></li>`).join("")}
-              ${site.newBuild
-                ? `<li><span class="ok">✔</span><span>${L(`Rakennuskosteus on kuivunut: katon kosteus laski ${n0(A.firstMonth.rh)} %:sta ${n0(A.driest.rh)} %:iin.`, `Construction moisture has dried out: roof humidity fell from ${n0(A.firstMonth.rh)} % to ${n0(A.driest.rh)} %.`)}</span></li>`
-                : `<li><span class="ok">✔</span><span>${L(`Rakenteen kosteustaso on normaali (kuukausikeskiarvot ${n0(A.driest.rh)}–${n0(A.wettest.rh)} %, vaihtelu seuraa vuodenaikoja).`, `Structural humidity is normal (monthly means ${n0(A.driest.rh)}–${n0(A.wettest.rh)} %, varying with the seasons).`)}</span></li>`}
-              ${A.maxMold !== null ? `<li><span class="ok">✔</span><span>${L(`Homeriski on matala (suurin homeindeksi ${n1(A.maxMold)}, hälytysraja 2,5).`, `Mould risk is low (highest mould index ${n1(A.maxMold)}, alert limit 2.5).`)}</span></li>` : ""}
-            </ul>
-          </section>
-          <section class="doc__section">
-            <h2>${L("Tehdyt toimenpiteet", "Actions taken")}</h2>
-            ${done.length ? `<div class="table-wrap"><table><thead><tr><th>${L("Havainto", "Finding")}</th><th>${L("Tilaus", "Order")}</th><th>${L("Tila", "Status")}</th></tr></thead><tbody>${done.map((f) => `<tr><td>${esc(f.title)}</td><td>${f.state.order.no} · ${esc(f.state.order.partner)}</td><td>${f.state.status === "resolved" ? `<span class="chip chip--ok">${L("Korjattu", "Fixed")}</span>` : `<span class="chip chip--warn">${L("Tilattu", "Ordered")}</span>`}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">${act.length ? L("Ei vielä toimenpiteitä. Tilaa korjaukset kohdenäkymän toimenpidelistalta.", "No actions yet. Order repairs from the site view's action list.") : L("Ei toimenpiteitä vaativia havaintoja.", "No findings requiring action.")}</p>`}
-          </section>
-          <section class="doc__section grid grid--2" style="gap:28px">
-            <div>
-              <h2>${L("Suositukset pitkän tähtäimen suunnitelmaan", "Recommendations for the long-term plan")}</h2>
-              <ul class="checklist" style="font-size:14px">${pts.map((p, i) => `<li><span>${i + 1}.</span><span>${esc(p)}</span></li>`).join("")}</ul>
-            </div>
-            <div>
-              <h2>${L("Kustannus ja hyöty", "Cost and benefit")}</h2>
-              <div class="facts" style="grid-template-columns:1fr 1fr">
-                <div><b>~${I.money(monthly)}/${L("kk", "mo")}</b><span>${L("Care Pro + laitteisto palveluna", "Care Pro + hardware as a service")}</span></div>
-                <div><b>${site.apartments ? I.money(monthly / site.apartments, 2) : "–"}</b><span>${site.apartments ? L(`per ${I.pick(P.unitWord)} kuukaudessa (${site.apartments} kpl)`, `per ${I.pick(P.unitWord)} per month (${site.apartments})`) : L("liikekiinteistö", "commercial property")}</span></div>
-                <div><b>&gt; ${I.money(5000)}</b><span>${L("yksi vältetty kattovuoto", "one avoided roof leak")}</span></div>
-                <div><b>5–10 %</b><span>${L("vakuutusalennus datan perusteella", "insurance discount based on data")}</span></div>
-                <div style="grid-column:1/-1"><b>${I.money(hwc.total)}</b><span>${L("laitteisto VILPEn hinnaston mukaan (alv 0 %)", "hardware at VILPE list prices (excl. VAT)")}${hwc.leak && hwc.humidity ? ` · ${L("vuotovalvonta", "leak detection")} ${I.money(hwc.leak)} + ${L("kosteudenhallinta", "humidity control")} ${I.money(hwc.humidity)}` : ""}</span></div>
-              </div>
-              <p class="muted" style="font-size:12px;margin-top:8px">${L("Raportin vastaanottaja", "Report recipient")}: ${esc(I.role("owner"))}</p>
-            </div>
-          </section>
-        </div>
-        <footer class="doc__foot"><span>${L("Laskelmat ovat havainnollistavia arvioita.", "Figures are illustrative estimates.")}${site.real ? "" : L(" Kohteen data on simuloitu demoa varten.", " The site's data is simulated for the demo.")}</span><span>VILPE Sense+ Care Pro</span></footer>
-      </article>`;
-    bindSiteSelect();
-    $("#print").addEventListener("click", () => window.print());
-  }
-
-  // ---------- Liiketoiminta ja maaprofiilit ----------
+  // ---------- Hinnoittelu ja liiketoimintamalli ----------
+  const calc = { m2: 4000, cls: "B" };
   function renderModel() {
     const P = I.profile();
-    const codes = Object.keys(I.PROFILES).sort((a, b) => I.PROFILES[a].step - I.PROFILES[b].step);
-    const roleRow = (label, k) => {
-      const r = P.roles[k];
-      return `<tr><th>${label}</th><td>${esc(L(r.fi, r.en))}${r.local ? ` <span class="muted">· ${esc(r.local)}</span>` : ""}</td></tr>`;
-    };
+    const roleLabel = { owner: L("Omistaja (maksaja)", "Owner (payer)"), manager: L("Kiinteistön hoitaja (käyttäjä)", "Property manager (user)"), contractor: L("Urakoitsija", "Contractor"), insurer: L("Riskinkantaja", "Risk bearer") };
     view.innerHTML = `
       <div class="page-head">
         <div>
-          <div class="caps muted">${L("Ansaintamalli", "Business model")}</div>
-          <h1>${L("Sama anturi. Uusi liiketoiminta.", "Same sensor. New business.")}</h1>
-          <p>${L("Sense+ tuottaa arvoa koko rakennuksen elinkaaren ajan, ja samasta datasta maksaa useampi osapuoli.", "Sense+ creates value across the whole building lifecycle, and several parties pay for the same data.")}</p>
+          <div class="caps muted">${L("Liiketoimintamalli", "Business model")}</div>
+          <h1>${L("Maksa kuivasta katosta, älä antureista.", "Pay for a dry roof, not for sensors.")}</h1>
+          <p>${L("Kiinteä hinta per neliö vuodessa: VILPE tuottaa laitteet ja datan, sertifioitu urakoitsija huoltaa ja korjaa, ja data tekee kattoriskistä hinnoiteltavan.", "A fixed price per square metre per year: VILPE provides hardware and data, a certified contractor maintains and repairs, and the data makes roof risk priceable.")}</p>
         </div>
       </div>
       <div class="lifecycle">
-        <div><h3>${L("Rakentaminen", "Construction")}</h3><b>${L("Urakoitsija asentaa", "Contractor installs")}</b><span>${L("Sense + Sense+ tarjoukseen, urakoitsija saa provision", "Sense + Sense+ in the quote, contractor earns commission")}</span></div>
-        <div><h3>${L("Luovutus", "Handover")}</h3><b>${L("Kosteuspassi #1", "Moisture Passport #1")}</b><span>${L("Kuivuminen todennettu datalla", "Drying verified with data")}</span></div>
-        <div><h3>${L("Käyttö 10–15 v", "Operation 10–15 yrs")}</h3><b>Sense+ Care</b><span>${L("Valvoo, hälyttää, ohjaa korjaukset, raportoi", "Monitors, alerts, routes repairs, reports")}</span></div>
-        <div><h3>${L("Myynti / remontti", "Sale / renovation")}</h3><b>${L("Kosteuspassi #2", "Moisture Passport #2")}</b><span>${L("Vuosien näyttö → uusi kierros", "Years of evidence → next cycle")}</span></div>
-      </div>
-      <div class="grid grid--3">
-        <section class="card plan">
-          <h3>Care Basic</h3><div class="plan__price">~${I.price(20)}<small style="font-size:14px;font-weight:400"> /${L("kk/kohde", "mo/site")}</small></div><span class="muted" style="font-size:14px">${L("Asuinyhteisöt, pienet kohteet", "Residential associations, small sites")}</span>
-          <ul><li>${L("Salkkunäkymä ja Health Score", "Portfolio view and Health Score")}</li><li>${L("Laitevalvonta ja hälytykset", "Device monitoring and alerts")}</li><li>${L("Työtilaus kumppaniurakoitsijalle", "Work orders to partner contractors")}</li><li>${L("Hallitusraportti vuosittain", "Annual board report")}</li><li class="no">${L("Poikkeamatunnistus ja sääkorrelaatio", "Anomaly detection and weather correlation")}</li><li class="no">${L("Asiantuntijavarmistus", "Expert verification")}</li></ul>
-        </section>
-        <section class="card plan plan--featured">
-          <h3>Care Pro</h3><div class="plan__price">${I.price(60)}–${I.price(90)}<small style="font-size:14px;font-weight:400"> /${L("kk/kohde", "mo/site")}</small></div><span class="muted" style="font-size:14px">${L("Tasakatot, viherkatot, liikekiinteistöt", "Flat roofs, green roofs, commercial")}</span>
-          <ul><li>${L("Kaikki Basicin ominaisuudet", "Everything in Basic")}</li><li>${L("Poikkeamatunnistus (naapurivertailu)", "Anomaly detection (neighbour comparison)")}</li><li>${L("Sääkorrelaatio", "Weather correlation")}: ${esc(I.pick(P.weather))}</li><li>${L("VILPEn asiantuntijavarmistus", "VILPE expert verification")}</li><li>${L("Raportti kvartaaleittain + PTS-syöte", "Quarterly report + long-term plan input")}</li><li>${L("1 Kosteuspassi / vuosi", "1 Moisture Passport / year")}</li></ul>
-        </section>
-        <section class="card plan">
-          <h3>Portfolio</h3><div class="plan__price">${L("Sopimus", "Contract")}</div><span class="muted" style="font-size:14px">${L(`${I.roleShort("manager")}-toimistot, −20 % yli 20 kohdetta`, `${I.roleShort("manager")} firms, −20 % above 20 sites`)}</span>
-          <ul><li>${L("Kaikki Pron ominaisuudet", "Everything in Pro")}</li><li>${L("Kosteuspassit sisältyvät", "Moisture Passports included")}</li><li>${L("API ja kiinteistöjärjestelmäintegraatio", "API and property-system integration")}</li><li>${L("Vakuutusdatan jako suostumuksella", "Insurer data sharing with consent")}</li><li>${L("Oma yhteyshenkilö VILPEllä", "Dedicated VILPE contact")}</li></ul>
-        </section>
-      </div>
-      <p class="muted" style="font-size:12px;margin-top:8px">${L(`Hinnat maaprofiililla ${I.pick(P.name)}: perushinta × maakerroin ${n1(P.mult)}${P.currency !== "EUR" ? ` × arvioitu kurssi ${nd(P.rate, 2)} ${P.currency}/€` : ""}. Hypoteeseja, testataan pilotissa.`, `Prices for the ${I.pick(P.name)} profile: base price × country multiplier ${n1(P.mult)}${P.currency !== "EUR" ? ` × estimated rate ${nd(P.rate, 2)} ${P.currency}/€` : ""}. Hypotheses to be tested in pilots.`)}</p>
-
-      <div class="grid grid--2" style="margin-top:20px">
-        <section class="card">
-          <div class="card__head"><h2>${L("Maaprofiili", "Country profile")}: ${esc(I.pick(P.name))}</h2><span class="caps">${L("sama palvelu, eri termit", "same service, local terms")}</span></div>
-          <table class="profile-table">
-            <tbody>
-              ${roleRow(L("Omistaja (maksaja)", "Owner (payer)"), "owner")}
-              ${roleRow(L("Pääkäyttäjä", "Main user"), "manager")}
-              ${roleRow(L("Korjaaja", "Repairer"), "contractor")}
-              ${roleRow(L("Riskinkantaja", "Risk bearer"), "insurer")}
-              <tr><th>${L("Kärkisegmentti", "Lead segment")}</th><td>${esc(I.pick(P.segment))}</td></tr>
-              <tr><th>${L("Säädöskytkentä", "Regulatory link")}</th><td>${esc(I.pick(P.regulation))}</td></tr>
-              <tr><th>${L("Säädata", "Weather data")}</th><td>${esc(I.pick(P.weather))}</td></tr>
-              <tr><th>${L("Yksiköt ja valuutta", "Units and currency")}</th><td>${I.tempUnit()} · ${I.areaUnit()} · ${P.currency}</td></tr>
-              <tr><th>${L("Tietosuoja", "Data protection")}</th><td>${esc(I.pick(P.privacy))} · ${L("data säilytetään EU:ssa", "data stored in the EU")}</td></tr>
-              <tr><th>${L("Palvelun kieli", "Service language")}</th><td>${P.lang === "fi" ? L("suomi (englanti valittavissa)", "Finnish (English available)") : L("englanti (suomi valittavissa)", "English (Finnish available)")}</td></tr>
-            </tbody>
-          </table>
-        </section>
-        <section class="card">
-          <div class="card__head"><h2>${L("Laajenemisjärjestys", "Expansion order")}</h2><span class="caps">${L("klikkaa vaihtaaksesi maata", "click to switch country")}</span></div>
-          <div class="table-wrap"><table>
-            <thead><tr><th>#</th><th>${L("Maa", "Country")}</th><th class="r">${L("Maakerroin", "Multiplier")}</th><th>${L("Valuutta", "Currency")}</th><th>${L("Kytkentä", "Link")}</th></tr></thead>
-            <tbody>${codes.map((c) => {
-              const p = I.PROFILES[c];
-              const link = c === "UK" ? "Awaab's Law · golden thread" : c === "US" ? "Roof asset report" : "EPBD 2024";
-              return `<tr class="is-clickable ${c === I.country ? "is-selected" : ""}" data-country="${c}"><td>${p.step}</td><td><b>${esc(I.pick(p.name))}</b></td><td class="r num">${n1(p.mult)}</td><td>${p.currency}</td><td>${link}</td></tr>`;
-            }).join("")}</tbody>
-          </table></div>
-          <p class="muted" style="font-size:13px;margin-top:12px">${L("Uusi maa on yksi konfiguraatio: roolitermit, yksiköt, valuutta, säädöskytkentä ja hintakerroin – ei uutta ohjelmistoa.", "A new country is one configuration: role terms, units, currency, regulatory link and price multiplier – no new software.")}</p>
-        </section>
+        <div><h3>${L("Kohde löytyy", "Site found")}</h3><b>${L("Urakoitsija / passi", "Contractor / passport")}</b><span>${L("Urakoitsija tarjoaa, luovutuspassi tai vakuuttaja suosittelee", "Contractor offers, handover passport or insurer recommends")}</span></div>
+        <div><h3>${L("Aloitus", "Start")}</h3><b>${L("Kartoitus → riskiluokka", "Survey → risk class")}</b><span>${L("Riskiluokka määrää hinnan, vähintään C", "Risk class sets the price, at least C")}</span></div>
+        <div><h3>${L("Käyttö 10 v", "Operation 10 yrs")}</h3><b>${L("Valvonta 24/7", "Monitoring 24/7")}</b><span>${L("Vuositarkastus, korjaukset rahastosta, vuosipassi", "Annual inspection, repairs from the fund, annual passport")}</span></div>
+        <div><h3>${L("Kauppa / uusinta", "Sale / renewal")}</h3><b>${L("Takuu siirtyy", "Guarantee transfers")}</b><span>${L("Vuosipassi + takuu ostajalle tai sopimus uusitaan", "Annual passport + guarantee to the buyer, or renewal")}</span></div>
       </div>
 
-      <div class="grid grid--2" style="margin-top:20px">
+      <div class="grid grid--2">
         <section class="card calc">
-          <div class="card__head"><h2>${L("Laskuri", "Calculator")}: ${esc(I.roleShort("owner"))}</h2><span class="caps">${L("laitteisto palveluna", "hardware as a service")}</span></div>
-          <label for="c-area">${L("Kattoala", "Roof area")}: <span id="c-area-v"></span> ${I.areaUnit()}</label>
-          <input type="range" id="c-area" min="200" max="3000" step="50" value="800">
-          <label for="c-apts">${L("Asuntoja", "Apartments / units")}: <span id="c-apts-v"></span></label>
-          <input type="range" id="c-apts" min="6" max="120" step="1" value="30">
-          <label for="c-ins">${L("Kiinteistövakuutus", "Property insurance")}: <span id="c-ins-v"></span> /${L("v", "yr")}</label>
-          <input type="range" id="c-ins" min="1000" max="20000" step="500" value="6000">
+          <div class="card__head"><h2>${L("Hinnoittelulaskuri", "Pricing calculator")}</h2><span class="caps">[H]</span></div>
+          <label for="c-m2">${L("Katon pinta-ala", "Roof area")}: <span id="c-m2-v"></span></label>
+          <input type="range" id="c-m2" min="500" max="20000" step="500" value="${calc.m2}">
+          <label>${L("Riskiluokka", "Risk class")}</label>
+          <div class="segmented" role="group" aria-label="${L("Riskiluokka", "Risk class")}">${"ABCD".split("").map((c) => `<button data-cls="${c}" class="${c === calc.cls ? "is-active" : ""}">${c}</button>`).join("")}</div>
           <div class="calc__out" id="c-out"></div>
-          <p class="muted" style="font-size:12px;margin-top:10px">${L(`~10 anturia / ${n0(I.area(200))} ${I.areaUnit()} (10 kpl paketti ${I.money(580)}), tukiasema ${I.money(695)}, Croco-kiinnikkeet ja asennus ~${I.money(INSTALL_EUR)}, kuoletus 10 v + marginaali, Care Pro ${I.price(CARE_PRO_EUR)}/kk HaaS-paketissa, vakuutusetu 5–10 %. Laitteisto VILPEn hinnaston mukaan (alv 0 %), palvelu maakertoimella.`, `~10 sensors per ${n0(I.area(200))} ${I.areaUnit()} (10-pack ${I.money(580)}), base station ${I.money(695)}, Croco fixings and installation ~${I.money(INSTALL_EUR)}, 10-year amortisation + margin, Care Pro ${I.price(CARE_PRO_EUR)}/mo in the HaaS bundle, insurance benefit 5–10 %. Hardware at VILPE list prices (excl. VAT), service with the country multiplier.`)}</p>
+          <div class="split" id="c-split"></div>
+          <div id="c-legend" class="legend legend--stack"></div>
+          <p class="muted" style="font-size:12px;margin-top:10px" id="c-note"></p>
         </section>
         <section class="card">
-          <div class="card__head"><h2>${L("VILPEn esimerkkiskenaario", "VILPE example scenario")}</h2><span class="caps">${L("havainnollistava · EUR", "illustrative · EUR")}</span></div>
+          <div class="card__head"><h2>${L("Tulovirrat", "Revenue streams")}</h2><span class="caps">[H]</span></div>
           <div class="table-wrap"><table>
-            <thead><tr><th>${L("Vuosi", "Year")}</th><th class="r">${L("Care-kohteet", "Care sites")}</th><th class="r">Care</th><th class="r">${L("Passit", "Passports")}</th><th class="r">${L("Vakuutus", "Insurance")}</th><th class="r">${L("Yhteensä", "Total")}</th></tr></thead>
+            <thead><tr><th>${L("Tulovirta", "Stream")}</th><th>${L("Maksaja", "Payer")}</th><th class="r">${L("Hinta", "Price")}</th></tr></thead>
             <tbody>
-              <tr><td>1 · ${L("pilotti", "pilot")}</td><td class="r num">150</td><td class="r num">${nd(0.1, 2)} M€</td><td class="r num">${nd(0.02, 2)} M€</td><td class="r num">–</td><td class="r num"><b>${nd(0.12, 2)} M€</b></td></tr>
-              <tr><td>2</td><td class="r num">600</td><td class="r num">${nd(0.5, 2)} M€</td><td class="r num">${nd(0.1, 2)} M€</td><td class="r num">${nd(0.03, 2)} M€</td><td class="r num"><b>${nd(0.63, 2)} M€</b></td></tr>
-              <tr><td>3</td><td class="r num">${n0(1500)}</td><td class="r num">${nd(1.35, 2)} M€</td><td class="r num">${nd(0.24, 2)} M€</td><td class="r num">${nd(0.11, 2)} M€</td><td class="r num"><b>${nd(1.7, 2)} M€</b></td></tr>
+              <tr><td><b>${L("Kuiva katto -takuu", "Dry Roof Guarantee")}</b><div class="muted" style="font-size:12px">${L("päätuote", "core product")}</div></td><td>${L("Omistaja", "Owner")}</td><td class="r num">${I.money(I.perArea(1.2), 2)}–${perArea(2.0)}/${yr()}</td></tr>
+              <tr><td>${L("Aloituskartoitus (ilman Senseä)", "Start survey (without Sense)")}</td><td>${L("Omistaja", "Owner")}</td><td class="r num">${I.money(0)}–${I.money(2000)}</td></tr>
+              <tr><td>${L("Kosteuspassi erikseen", "Moisture passport separately")}<div class="muted" style="font-size:12px">${L("syöttökanava", "feeder channel")}</div></td><td>${L("Rakennuttaja, myyjä", "Developer, seller")}</td><td class="r num">${I.money(290)}–${I.money(3000)}</td></tr>
+              <tr><td>${L("Kuivumisennuste", "Drying forecast")}<div class="muted" style="font-size:12px">${L("syöttökanava, ehdollinen", "feeder channel, conditional")}</div></td><td>${L("Rakennusliike", "Construction company")}</td><td class="r num">${I.money(1000)}–${I.money(3000)}</td></tr>
+              <tr><td>${L("Riskiluokan korjaukset", "Risk-class repairs")}<div class="muted" style="font-size:12px">${L("lisämyynti", "upsell")}</div></td><td>${L("Omistaja", "Owner")}</td><td class="r">${L("VILPEn tuotteet + työ", "VILPE products + labour")}</td></tr>
             </tbody>
           </table></div>
-          <p class="muted" style="font-size:13px;margin-top:12px">${L("Oletukset: Care ~900 €/kohde/v, passi ~400 €, vakuutus ~75 €/kohde/v. Lisäksi kasvava laite- ja lisämyynti (huippuimurit, läpiviennit).", "Assumptions: Care ~€900 per site per year, passport ~€400, insurance ~€75 per site per year. Plus growing device and add-on sales (roof fans, penetrations).")}</p>
-          <p class="quote" style="margin-top:18px">${L("Kertamyynnistä toistuvaan tuloon ja suoraan asiakassuhteeseen.", "From one-off sales to recurring revenue and a direct customer relationship.")}</p>
+          <p class="quote" style="margin-top:18px">${L("Yksi myöhään löydetty vuoto maksaa enemmän kuin kymmenen vuotta takuuta.", "One late-found leak costs more than ten years of guarantee.")}</p>
         </section>
       </div>
 
       <div class="grid grid--2" style="margin-top:20px">
         <section class="card">
-          <div class="card__head"><h2>${L("VILPEn hinnasto 2025", "VILPE price list 2025")}</h2><span class="caps">${L("alv 0 %", "excl. VAT")}${I.profile().currency !== "EUR" ? ` · ${L("muunnettu", "converted")} ${I.profile().currency}` : ""}</span></div>
+          <div class="card__head"><h2>${L("VILPEn esimerkkiskenaario", "VILPE example scenario")}</h2><span class="caps">[H] · EUR</span></div>
           <div class="table-wrap"><table>
-            <thead><tr><th>${L("Tuote", "Product")}</th><th>${L("Tuotenro", "Product no.")}</th><th class="r">${L("Hinta", "Price")}</th></tr></thead>
+            <thead><tr><th>${L("Vuosi", "Year")}</th><th class="r">${L("Takuu-m²", "Guarantee m²")}</th><th class="r">${L("Takuutulo", "Guarantee")}</th><th class="r">${L("Passit", "Passports")}</th><th class="r">${L("Ennusteet", "Forecasts")}</th><th class="r">${L("Yhteensä", "Total")}</th></tr></thead>
+            <tbody>
+              <tr><td>1 · ${L("pilotti", "pilot")}</td><td class="r num">${n0(20000)}</td><td class="r num">0</td><td class="r num">${nd(0.02, 2)} M€</td><td class="r num">0</td><td class="r num"><b>~${nd(0.02, 2)} M€</b></td></tr>
+              <tr><td>2</td><td class="r num">${n0(200000)}</td><td class="r num">${nd(0.18, 2)} M€</td><td class="r num">${nd(0.1, 2)} M€</td><td class="r num">${nd(0.06, 2)} M€</td><td class="r num"><b>~${nd(0.34, 2)} M€</b></td></tr>
+              <tr><td>3</td><td class="r num">${n0(1000000)}</td><td class="r num">${nd(0.9, 2)} M€</td><td class="r num">${nd(0.24, 2)} M€</td><td class="r num">${nd(0.15, 2)} M€</td><td class="r num"><b>~${nd(1.29, 2)} M€</b></td></tr>
+            </tbody>
+          </table></div>
+          <p class="muted" style="font-size:13px;margin-top:12px">${L("VILPEn osuus 0,9 €/m²/v, passi ~400 €, ennuste ~3 000 €/projekti. 1 000 000 m² ≈ 250 logistiikkahallia. Takuutulo on kumulatiivista 10 vuoden sopimuksilla.", "VILPE share €0.9/m²/yr, passport ~€400, forecast ~€3,000/project. 1,000,000 m² ≈ 250 logistics halls. Guarantee revenue is cumulative on 10-year contracts.")}</p>
+        </section>
+        <section class="card">
+          <div class="card__head"><h2>${L("VILPEn hinnasto 2025", "VILPE price list 2025")}</h2><span class="caps">[R] · ${L("alv 0 %", "excl. VAT")}</span></div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>${L("Tuote", "Product")}</th><th>${L("Tuotenro", "No.")}</th><th class="r">${L("Hinta", "Price")}</th></tr></thead>
             <tbody>${Object.values(PRICE_LIST).map((p) => `<tr><td>${esc(L(p.fi, p.en))}</td><td class="num">${p.no}</td><td class="r num">${I.money(p.eur, p.eur % 1 ? 2 : 0)}</td></tr>`).join("")}</tbody>
           </table></div>
-          <ul class="checklist" style="font-size:14px;margin-top:14px">
-            <li><span>▸</span><span>${L(`Vuotovalvonta: ${I.money(58)} / ${n0(I.area(20))} ${I.areaUnit()} eli ~${I.money(PRICE_LIST.leakPack.eur / 10 / I.area(20), 1)}/${I.areaUnit()} + tukiasema (riittää 200 anturille ja 50 ohjausyksikölle).`, `Leak detection: ${I.money(58)} per ${n0(I.area(20))} ${I.areaUnit()}, i.e. ~${I.money(PRICE_LIST.leakPack.eur / 10 / I.area(20), 1)}/${I.areaUnit()} + base station (serves 200 sensors and 50 control units).`)}</span></li>
-            <li><span>▸</span><span>${L(`Kosteudenhallinta: Sense-paketti + ECo Sense -huippuimuri = ${I.money(PRICE_LIST.mcuPack.eur + PRICE_LIST.fan.eur)} per imuri.`, `Humidity control: Sense package + ECo Sense roof fan = ${I.money(PRICE_LIST.mcuPack.eur + PRICE_LIST.fan.eur)} per fan.`)}</span></li>
-            <li><span>▸</span><span class="muted">${L("Croco-kiinnikkeet myydään erikseen.", "Croco fixings are sold separately.")}</span></li>
-          </ul>
+          <p class="muted" style="font-size:13px;margin-top:10px">${L(`Vuotovalvonta ~${I.money(I.perArea(2.9), 1)}/${I.areaUnit()} + tukiasema; kosteudenhallinta ~${I.money(1637)}/huippuimuri. Vantaan kohde ~${I.money(15600)}. Sensessä ei ole tänään toistuvaa maksua.`, `Leak detection ~${I.money(I.perArea(2.9), 1)}/${I.areaUnit()} + base station; humidity control ~${I.money(1637)} per roof fan. The Vantaa site ~${I.money(15600)}. Sense has no recurring fee today.`)}</p>
+        </section>
+      </div>
+
+      <div class="grid grid--2" style="margin-top:20px">
+        <section class="card">
+          <div class="card__head"><h2>${L("Maaprofiili", "Country profile")}: ${esc(I.pick(P.name))}</h2><span class="caps">${L("roolit, ei instituutiot", "roles, not institutions")}</span></div>
+          <table class="profile-table"><tbody>
+            ${["owner", "manager", "contractor", "insurer"].map((k) => { const r = P.roles[k]; return `<tr><th>${roleLabel[k]}</th><td>${esc(L(r.fi, r.en))}${r.local ? ` <span class="muted">· ${esc(r.local)}</span>` : ""}</td></tr>`; }).join("")}
+            <tr><th>${L("Takuun kytkentä", "Guarantee link")}</th><td>${esc(I.pick(P.link))}</td></tr>
+            <tr><th>${L("Yksiköt ja valuutta", "Units and currency")}</th><td>${I.tempUnit()} · ${I.areaUnit()} · ${P.currency}${P.currency !== "EUR" ? ` <span class="muted">(${L("arvioitu kurssi", "estimated rate")} ${nd(P.rate, 2)}/€)</span>` : ""}</td></tr>
+            <tr><th>${L("Kieli", "Language")}</th><td>${L("suomi ja englanti", "Finnish and English")}</td></tr>
+          </tbody></table>
         </section>
         <section class="card">
-          <div class="card__head"><h2>${L("Esimerkki: Vantaan kohde", "Example: the Vantaa site")}</h2><span class="caps">${L("hinnaston mukaan", "at list prices")}</span></div>
-          ${(() => {
-            const v = hardware(51, 7);
-            return `<table><tbody>
-              <tr><td>${L(`Vuotoanturit: ${v.packs} × 10 kpl (51 asennettu)`, `Leak sensors: ${v.packs} × 10 pcs (51 installed)`)}</td><td class="r num">${I.money(v.packs * PRICE_LIST.leakPack.eur)}</td></tr>
-              <tr><td>${L("Mobiilitukiasema", "Mobile base station")}</td><td class="r num">${I.money(v.ccus * PRICE_LIST.ccu.eur)}</td></tr>
-              <tr><td><b>${L("Vuotovalvonta yhteensä", "Leak detection total")}</b></td><td class="r num"><b>${I.money(v.leak)}</b></td></tr>
-              <tr><td>${L(`Kosteudenhallinta: 7 × (${I.money(PRICE_LIST.mcuPack.eur)} + ${I.money(PRICE_LIST.fan.eur)})`, `Humidity control: 7 × (${I.money(PRICE_LIST.mcuPack.eur)} + ${I.money(PRICE_LIST.fan.eur)})`)}</td><td class="r num">${I.money(v.humidity)}</td></tr>
-              <tr><td><b>${L("Koko järjestelmä", "Complete system")}</b></td><td class="r num"><b>${I.money(v.total)}</b></td></tr>
-            </tbody></table>`;
-          })()}
-          <p class="quote" style="margin-top:18px">${L(`Koko vuotovalvonta ${I.money(hardware(51, 0).leak)} – VILPEn tehtaan yksi vuoto säästi ${I.money(45000)}.`, `Complete leak detection ${I.money(hardware(51, 0).leak)} – a single leak at VILPE's factory saved ${I.money(45000)}.`)}</p>
+          <div class="card__head"><h2>${L("Takuu eri maissa", "The guarantee by country")}</h2><span class="caps">${L("klikkaa vaihtaaksesi", "click to switch")}</span></div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>${L("Maa", "Country")}</th><th>${L("Takuun kytkentä", "Guarantee link")}</th></tr></thead>
+            <tbody>${I.ORDER.map((c) => `<tr class="is-clickable ${c === I.country ? "is-selected" : ""}" data-country="${c}"><td><b>${esc(I.pick(I.PROFILES[c].name))}</b></td><td style="font-size:13px">${esc(I.pick(I.PROFILES[c].link))}</td></tr>`).join("")}</tbody>
+          </table></div>
         </section>
       </div>`;
-    const calc = () => {
-      const area = +$("#c-area").value;
-      const apts = +$("#c-apts").value;
-      const ins = +$("#c-ins").value;
-      $("#c-area-v").textContent = n0(I.area(area));
-      $("#c-apts-v").textContent = apts;
-      $("#c-ins-v").textContent = I.money(ins);
-      const sensors = Math.ceil((area / 200) * 10);
-      const hwc = hardware(sensors, 0);
-      const monthly = hwc.haas + CARE_PRO_EUR * P.mult;
+
+    const update = () => {
+      const m2 = calc.m2;
+      const price = CLASS_PRICE[calc.cls];
+      const fee = price * m2;
+      const parts = splitOf(price);
+      const sensors = Math.ceil(m2 / 20);
+      const hw = hardware(sensors, 0, m2);
+      const hwShare = parts[0].value * m2;
+      $("#c-m2-v").textContent = area(m2);
       $("#c-out").innerHTML = `
-        <div><b class="num">${sensors}</b><span>${L("anturia", "sensors")} · ${L("laitteisto", "hardware")} ${I.money(hwc.total + INSTALL_EUR)}</span></div>
-        <div><b class="num">${I.money(monthly)}/${L("kk", "mo")}</b><span>${L("vakuutusetu", "insurance benefit")} −${I.money(ins * 0.075)}/${L("v", "yr")}</span></div>
-        <div><b class="num">${I.money(monthly / apts, 2)}</b><span>${L(`per ${I.pick(P.unitWord)} kuukaudessa`, `per ${I.pick(P.unitWord)} per month`)}</span></div>`;
+        <div><b class="num">${perArea(price)}</b><span>${L("takuumaksu", "guarantee fee")} / ${yr()}</span></div>
+        <div><b class="num">${I.money(fee)}</b><span>${L(`vuodessa · ${I.money(fee / 12)}/kk`, `per year · ${I.money(fee / 12)}/mo`)}</span></div>
+        <div><b class="num">${I.money((parts[0].value + parts[1].value) * m2)}</b><span>${L("VILPEn osuus / v", "VILPE share / yr")}</span></div>`;
+      $("#c-split").innerHTML = parts.map((p) => `<div style="flex:${p.value};background:${p.color}" title="${esc(L(p.fi, p.en))}"></div>`).join("");
+      $("#c-legend").innerHTML = parts.map((p) => `<span class="legend__item"><span class="legend__swatch legend__swatch--bar" style="background:${p.color}"></span>${esc(L(p.fi, p.en))} · ${perArea(p.value)} · <b>${I.money(p.value * m2)}</b></span>`).join("");
+      $("#c-note").textContent = L(`Laitteisto hinnaston mukaan: ${sensors} anturia + tukiasema ${I.money(hw.list)} + asennus ~${I.money(hw.install)} [H] → laitteisto-osuus kattaa laitteiston ~${n1(hw.total / hwShare)} vuodessa.${calc.cls === "D" ? " Luokka D: korjaukset ennen takuun alkua." : ""}`, `Hardware at list prices: ${sensors} sensors + base station ${I.money(hw.list)} + installation ~${I.money(hw.install)} [H] → the hardware share covers it in ~${n1(hw.total / hwShare)} years.${calc.cls === "D" ? " Class D: repairs required before the guarantee starts." : ""}`);
     };
-    $$(".calc input").forEach((i) => i.addEventListener("input", calc));
-    calc();
+    $("#c-m2").addEventListener("input", (e) => { calc.m2 = +e.target.value; update(); });
+    $$("[data-cls]").forEach((b) => b.addEventListener("click", () => { calc.cls = b.dataset.cls; $$("[data-cls]").forEach((x) => x.classList.toggle("is-active", x === b)); update(); }));
+    update();
     $$("[data-country]").forEach((row) => row.addEventListener("click", () => switchCountry(row.dataset.country)));
   }
 
   // ---------- Maa ja kieli ----------
   function renderLocaleControls() {
-    const codes = Object.keys(I.PROFILES).sort((a, b) => I.PROFILES[a].step - I.PROFILES[b].step);
     $("#locale").innerHTML = `
-      <select id="country" class="locale__country" aria-label="${L("Maaprofiili", "Country profile")}" title="${L("Maaprofiili", "Country profile")}">${codes.map((c) => `<option value="${c}" ${c === I.country ? "selected" : ""}>${c} · ${esc(I.pick(I.PROFILES[c].name))}</option>`).join("")}</select>
+      <select id="country" class="locale__country" aria-label="${L("Maaprofiili", "Country profile")}" title="${L("Maaprofiili", "Country profile")}">${I.ORDER.map((c) => `<option value="${c}" ${c === I.country ? "selected" : ""}>${c} · ${esc(I.pick(I.PROFILES[c].name))}</option>`).join("")}</select>
       <div class="locale__lang" role="group" aria-label="${L("Kieli", "Language")}">
         <button data-lang="fi" class="${I.lang === "fi" ? "is-active" : ""}" aria-pressed="${I.lang === "fi"}">FI</button>
         <button data-lang="en" class="${I.lang === "en" ? "is-active" : ""}" aria-pressed="${I.lang === "en"}">EN</button>
@@ -1498,12 +1463,12 @@
     document.documentElement.lang = I.lang;
     Charts.locale = I.locale();
     const NAV = {
-      salkku: L("Salkku", "Portfolio"), kohde: L("Kohde", "Site"), passi: L("Kosteuspassi", "Moisture Passport"),
-      vakuutus: L("Vakuutusnäkymä", "Insurer view"), raportti: L("Hallitusraportti", "Board report"), malli: L("Liiketoiminta", "Business"),
+      salkku: L("Takuusalkku", "Portfolio"), kohde: L("Takuukohde", "Site"), passi: L("Vuosipassi", "Annual passport"),
+      vakuuttaja: L("Vakuuttaja", "Insurer"), malli: L("Hinnoittelu", "Pricing"),
     };
     $$("#nav a").forEach((a) => { a.textContent = NAV[a.dataset.view]; });
-    $("#footer-a").textContent = L("VILPE Sense+ · prototyyppi · VILPE x Vaasa Hackathon 2026", "VILPE Sense+ · prototype · VILPE x Vaasa Hackathon 2026");
-    $("#footer-b").textContent = L("VILPE Express Store, Vantaa: oikea data (9/2025–9/2026). Taloyhtiöiden data on simuloitu (12 kk), kumppanit kuvitteellisia.", "VILPE Express Store, Vantaa: real data (9/2025–9/2026). Housing company data is simulated (12 months); partners are fictional.");
+    $("#footer-a").textContent = L("VILPE Sense+ Kuiva katto -takuu · prototyyppi · VILPE x Vaasa Hackathon 2026", "VILPE Sense+ Dry Roof Guarantee · prototype · VILPE x Vaasa Hackathon 2026");
+    $("#footer-b").textContent = L("VILPE Express Store, Vantaa: oikea data (9/2025–9/2026). Hallien data on simuloitu (12 kk), kumppanit kuvitteellisia. [H] = hypoteesi.", "VILPE Express Store, Vantaa: real data (9/2025–9/2026). Hall data is simulated (12 months); partners are fictional. [H] = hypothesis.");
     $("#reset").textContent = L("Nollaa demo", "Reset demo");
     renderLocaleControls();
   }
@@ -1513,8 +1478,7 @@
     salkku: { render: renderPortfolio },
     kohde: { render: renderSite, site: true },
     passi: { render: renderPass, site: true },
-    vakuutus: { render: renderInsurer, site: true },
-    raportti: { render: renderReport, site: true },
+    vakuuttaja: { render: renderInsurer },
     malli: { render: renderModel },
   };
 

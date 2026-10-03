@@ -81,6 +81,7 @@ for serial in sorted(daily):
         "pos": positions.get(serial),
         "rh": [r1(mean([v[1] for v in d[day]])) if day in d else None for day in days],
         "t": [r1(mean([v[0] for v in d[day]])) if day in d else None for day in days],
+        "ah": [r1(mean([v[2] for v in d[day]]), 2) if day in d else None for day in days],
         "rhMean": r1(mean([v[1] for v in allv])),
         "rhMax": r1(max(v[1] for v in allv)),
         "tMin": r1(min(v[0] for v in allv if v[0] is not None)),
@@ -116,12 +117,44 @@ for f in sorted(glob.glob(os.path.join(SRC, "VILPE Vantaa, *.xlsx"))):
         by_day[rec["ts"].strftime("%Y-%m-%d")].append(rec)
         by_month[rec["ts"].strftime("%Y-%m")].append(rec)
 
+    # Mittausväli tunteina (yli 6 h aukot jätetään pois), löydös 2: käyntitunnit
+    for prev, rec in zip(recs, recs[1:]):
+        dt = (rec["ts"] - prev["ts"]).total_seconds() / 3600
+        rec["dt"] = dt if dt <= 6 else 0
+    recs[0]["dt"] = 0
+
+    def is_on(x):
+        return (x["rpm"] or 0) > 0
+
+    def wet_out(x):
+        return x.get("ahIn") is not None and x.get("ahOut") is not None and x["ahIn"] < x["ahOut"]
+
     def agg(rs):
         return {
             "rpm": r1(mean([x["rpm"] for x in rs]), 0),
-            "on": r1(100 * sum(1 for x in rs if (x["rpm"] or 0) > 0) / len(rs), 0),
+            "on": r1(100 * sum(1 for x in rs if is_on(x)) / len(rs), 0),
             **{k: r1(mean([x.get(k) for x in rs])) for k in ("tIn", "rhIn", "ahIn", "tOut", "rhOut", "ahOut")},
         }
+
+    def vent(rs):
+        """Käyntitunnit ja niistä ne, joina ulkoilma oli kosteampaa (tuuletus ei kuivata)."""
+        h_on = sum(x["dt"] for x in rs if is_on(x))
+        h_wet = sum(x["dt"] for x in rs if is_on(x) and wet_out(x))
+        rh = [x["rhIn"] for x in rs if x.get("rhIn") is not None]
+        dah = [x["ahIn"] - x["ahOut"] for x in rs if x.get("ahIn") is not None and x.get("ahOut") is not None]
+        return {
+            "hOn": r1(h_on, 0),
+            "hWet": r1(h_wet, 0),
+            "rh95": r1(100 * sum(1 for v in rh if v > 95) / len(rh), 0) if rh else None,
+            "dAH": r1(mean(dah), 2) if dah else None,
+        }
+
+    # Kesäjakso 18.6.–10.9. vuosittain (löydökset 2 ja 3)
+    summer = {}
+    for year in sorted({r["ts"].year for r in recs}):
+        rs = [r for r in recs if datetime(year, 6, 18) <= r["ts"] < datetime(year, 9, 11)]
+        if len(rs) > 300:
+            summer[str(year)] = vent(rs)
 
     # Pisin yhtäjaksoinen seisokki (rpm = 0)
     longest, cur_start, best = 0, None, (None, None)
@@ -150,7 +183,10 @@ for f in sorted(glob.glob(os.path.join(SRC, "VILPE Vantaa, *.xlsx"))):
         "stopFrom": best[0].strftime("%Y-%m-%d") if best[0] else None,
         "stopTo": best[1].strftime("%Y-%m-%d") if best[1] else None,
         "days": [{"d": k, **agg(v)} for k, v in sorted(by_day.items())],
-        "months": [{"m": k, **agg(v)} for k, v in sorted(by_month.items())],
+        "months": [{"m": k, **agg(v), **vent(v)} for k, v in sorted(by_month.items())],
+        "summer": summer,
+        "rpmDry": r1(mean([x["rpm"] for x in recs if is_on(x) and not wet_out(x) and x.get("ahIn") is not None]), 0),
+        "rpmWet": r1(mean([x["rpm"] for x in recs if is_on(x) and wet_out(x)]), 0),
     })
 
 data = {
