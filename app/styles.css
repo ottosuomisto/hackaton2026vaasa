@@ -389,6 +389,36 @@ tbody tr.is-selected { background: var(--sense-mold); }
 .calc__out span { font-size: 12px; color: var(--vilpe-gray-600); }
 .quote { font-size: 20px; font-weight: 700; border-left: 4px solid var(--vilpe-orange); padding-left: 14px; }
 
+/* ---------- Login ---------- */
+body.is-locked .nav, body.is-locked .user, body.is-locked #reset { display: none; }
+.login { max-width: 860px; margin: 40px auto; display: grid; grid-template-columns: 1fr 1fr; background: #fff; border: 1px solid var(--vilpe-navy-20); }
+.login__brand { background: var(--vilpe-navy); color: #fff; padding: 48px 40px; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+.login__brand::after { content: ""; position: absolute; right: -60px; bottom: -40px; width: 200px; height: 260px; background: var(--vilpe-blue); transform: skewX(-18deg); }
+.login__brand > * { position: relative; z-index: 1; }
+.login__brand img { width: 150px; height: auto; }
+.login__brand h1 { color: #fff; font-size: 40px; font-style: italic; font-weight: 500; }
+.login__brand h1 b { color: var(--vilpe-orange); }
+.login__brand p { color: rgba(255, 255, 255, .75); }
+.login__form { padding: 48px 40px; display: flex; flex-direction: column; gap: 16px; }
+.login__form h2 { font-size: 22px; margin-bottom: 4px; }
+.field label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--vilpe-gray-600); margin-bottom: 6px; }
+.field input { width: 100%; font: 16px var(--font); color: var(--vilpe-navy); border: 1px solid var(--vilpe-gray-300); padding: 10px 12px; border-radius: 0; }
+.field input:focus { outline: none; border-color: var(--vilpe-red); }
+.login__error { color: #A3141C; font-size: 14px; }
+.login__form .button { align-self: flex-start; margin-top: 4px; }
+
+/* ---------- Site management ---------- */
+.site-select { display: inline-flex; align-items: center; gap: 8px; }
+.site-select select, .select { font: 14px var(--font); padding: 9px 10px; border: 1px solid var(--vilpe-gray-300); color: var(--vilpe-navy); background: #fff; border-radius: 0; max-width: 260px; }
+.site__actions { display: inline-flex; gap: 14px; align-items: center; }
+.site__actions .link-button { color: var(--vilpe-gray-600); font-size: 12px; }
+.site__actions .link-button:hover { color: var(--vilpe-red); }
+.site__foot { align-items: center; }
+.map--sim img { opacity: .8; filter: none; }
+.notice { background: var(--sense-mold); color: var(--sense-blue); padding: 10px 14px; font-size: 14px; margin-bottom: 20px; }
+.user__logout { color: rgba(254, 254, 254, .7); font-size: 12px; margin-left: 6px; }
+.user__logout:hover { color: #fff; }
+
 /* ---------- Footer ---------- */
 .footer { background: var(--vilpe-navy); color: rgba(254, 254, 254, .7); font-size: 12px; }
 .footer__inner { max-width: 1440px; margin: 0 auto; padding: 14px 24px; display: flex; gap: 8px 24px; flex-wrap: wrap; justify-content: space-between; }
@@ -414,6 +444,9 @@ tbody tr.is-selected { background: var(--sense-mold); }
   .form-row { grid-template-columns: 1fr; gap: 4px; }
   .form-row label, .form-row .label { padding-top: 0; }
   .brand__product { display: none; }
+  .login { grid-template-columns: 1fr; margin: 0 auto; }
+  .login__brand, .login__form { padding: 32px 24px; }
+  .site-select select { max-width: 200px; }
 }
 
 /* ---------- Print (passi & raportti) ---------- */
