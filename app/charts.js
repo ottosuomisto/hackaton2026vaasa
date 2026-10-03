@@ -13,7 +13,7 @@
 
   function fmt(v, unit) {
     if (v === null || v === undefined || Number.isNaN(v)) return "–";
-    const s = Math.abs(v) >= 100 ? Math.round(v).toLocaleString("fi-FI") : v.toLocaleString("fi-FI", { maximumFractionDigits: 1 });
+    const s = Math.abs(v) >= 100 ? Math.round(v).toLocaleString(window.Charts.locale || "fi-FI") : v.toLocaleString(window.Charts.locale || "fi-FI", { maximumFractionDigits: 1 });
     return unit ? `${s} ${unit}` : s;
   }
 
@@ -58,7 +58,7 @@
       if (opts.right) {
         const vr = opts.right.min + ((opts.right.max - opts.right.min) * i) / ticks;
         const tr = el("text", { x: m.l + iw + 6, y: y + 4 }, svg);
-        tr.textContent = Math.round(vr).toLocaleString("fi-FI");
+        tr.textContent = Math.round(vr).toLocaleString(window.Charts.locale || "fi-FI");
       }
     }
     if (opts.left.title) {
@@ -165,5 +165,6 @@
       render(container, opts);
     },
     fmt,
+    locale: "fi-FI",
   };
 })();

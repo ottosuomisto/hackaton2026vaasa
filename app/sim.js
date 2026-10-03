@@ -190,7 +190,8 @@
       city: cfg.city,
       type: cfg.type,
       apartments: cfg.apartments || null,
-      structure: `${cfg.type}${cfg.built ? ` · ${cfg.built}` : ""}`,
+      built: cfg.built || "",
+      builtEn: cfg.builtEn || cfg.built || "",
       days,
       sensors,
       units,
@@ -208,11 +209,12 @@
       city: "Vaasa",
       type: "Tasakatto",
       built: "1978, katto uusittu 2019",
+      builtEn: "1978, roof renewed 2019",
       apartments: 30,
       sensors: 28,
       units: 0,
       events: { leak: { sensor: 17, from: SIM_DAYS - 34 } },
-      storyEvents: [{ d: null, cls: "info", t: "Sense-vuotopaikannin (28 × RHT-2) liitetty Sense+ Careen" }],
+      storyEvents: [{ d: null, cls: "info", t: "Sense-vuotopaikannin (28 × RHT-2) liitetty Sense+ Careen", tEn: "Sense leak detection (28 × RHT-2) connected to Sense+ Care" }],
     },
     {
       id: "hietalahdenkatu",
@@ -225,7 +227,7 @@
       units: 3,
       unitNames: ["Ullakko A", "Ullakko B", "Ullakko C"],
       events: { fanStop: { unit: 1, from: SIM_DAYS - 21 } },
-      storyEvents: [{ d: null, cls: "info", t: "Kosteudenhallinta (3 × MCU-2 + EC-huippuimuri) liitetty Sense+ Careen" }],
+      storyEvents: [{ d: null, cls: "info", t: "Kosteudenhallinta (3 × MCU-2 + EC-huippuimuri) liitetty Sense+ Careen", tEn: "Humidity control (3 × MCU-2 + EC roof fan) connected to Sense+ Care" }],
     },
     {
       id: "palosaari",
@@ -238,7 +240,7 @@
       units: 2,
       unitNames: ["Viherkatto itä", "Viherkatto länsi"],
       events: { offline: { sensor: 5, days: 4 } },
-      storyEvents: [{ d: null, cls: "info", t: "Vuotoanturit (16 × RHT-2) ja 2 × MCU-2 liitetty Sense+ Careen" }],
+      storyEvents: [{ d: null, cls: "info", t: "Vuotoanturit (16 × RHT-2) ja 2 × MCU-2 liitetty Sense+ Careen", tEn: "Leak sensors (16 × RHT-2) and 2 × MCU-2 connected to Sense+ Care" }],
     },
   ];
 

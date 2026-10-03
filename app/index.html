@@ -23,6 +23,7 @@
         <a href="#/raportti" data-view="raportti">Hallitusraportti</a>
         <a href="#/malli" data-view="malli">Liiketoiminta</a>
       </nav>
+      <div class="locale" id="locale"></div>
       <div class="user" id="user"></div>
     </div>
   </header>
@@ -31,9 +32,9 @@
 
   <footer class="footer">
     <div class="footer__inner">
-      <span>VILPE Sense+ · prototyyppi · VILPE x Vaasa Hackathon 2026</span>
-      <span>VILPE Express Store, Vantaa: oikea data (9/2025–9/2026). Taloyhtiöiden data on simuloitu (12 kk), kumppanit kuvitteellisia.</span>
-      <button class="link-button" id="reset">Nollaa demo</button>
+      <span id="footer-a"></span>
+      <span id="footer-b"></span>
+      <button class="link-button" id="reset"></button>
     </div>
   </footer>
 
@@ -46,6 +47,7 @@
   <script src="vendor/qrcode.js"></script>
   <script src="data.js"></script>
   <script src="sim.js"></script>
+  <script src="i18n.js"></script>
   <script src="charts.js"></script>
   <script src="app.js"></script>
 </body>

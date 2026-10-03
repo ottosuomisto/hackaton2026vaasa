@@ -32,6 +32,21 @@ node scripts/serve.js
 
 → http://localhost:8765
 
+## Maaprofiilit ja kielet
+
+Konseptin luvun 13.2 mukaisesti sama palvelu toimii kaikissa VILPEn maissa. Headerin **maavalitsin** vaihtaa maaprofiilin ja **FI/EN**-painike kielen. Data pysyy samana, mutta seuraavat asiat vaihtuvat:
+
+| Vaihtuu | Esimerkki (FI → UK → US) |
+|---|---|
+| Roolitermit | isännöitsijä → managing agent → property / facility manager |
+| Yksiköt | °C / m² → °C / m² → °F / ft² |
+| Valuutta ja hintakerroin | € × 1,0 → £ × 1,1 → $ × 1,3 |
+| Kosteuspassin säädöskytkentä | EPBD 2024 -remonttipassi → Awaab's Law & golden thread → roof asset report |
+| Säädatan lähde | Ilmatieteen laitos → globaali lähde (Copernicus / Open-Meteo) |
+| Kumppaniurakoitsijat | maakohtaiset (kuvitteellisia) |
+
+Profiilit: Suomi, Ruotsi, Viro, Latvia, Liettua, Puola, Iso-Britannia ja USA (`app/i18n.js`). Suomen profiilin oletuskieli on suomi, muiden englanti; kielen voi vaihtaa vapaasti. Liiketoiminta-näkymä näyttää valitun maan roolimallin ja laajenemisjärjestyksen. Valinta tallentuu selaimeen.
+
 ## Näkymät
 
 | Näkymä | Mitä näyttää |
@@ -42,7 +57,7 @@ node scripts/serve.js
 | **Kosteuspassi** | Luokka A–E, havainnot, kuivumiskäyrä, mittauskattavuus, QR-varmennus, tulostus/PDF |
 | **Vakuutusnäkymä** | Suostumus (peruttavissa), riskiluokka, alennusperuste, toimenpidehistoria, Health Score -erittely |
 | **Hallitusraportti** | Yhden sivun vuosikooste yhtiökokoukseen |
-| **Liiketoiminta** | Elinkaari, paketit, taloyhtiön kustannuslaskuri, VILPEn tuloskenaario |
+| **Liiketoiminta** | Elinkaari, paketit maan hinnoilla, maaprofiili (roolit, säädöskytkentä), laajenemisjärjestys, kustannuslaskuri, VILPEn tuloskenaario |
 
 Kohdekohtaisissa näkymissä on kohdevalitsin. Demon tila (tilaukset, korjaukset, suostumukset, lisätyt ja poistetut kohteet) tallentuu selaimen localStorageen. Footerin **Nollaa demo** palauttaa alkutilan.
 
@@ -75,6 +90,7 @@ app/
   charts.js       riippuvuukseton SVG-aikasarjakaavio
   app.js          näkymät, analytiikka, kirjautuminen ja demon tila
   sim.js          simuloidut kohteet
+  i18n.js         maaprofiilit, kielet, yksiköt ja valuutat
   data.js         Vantaan generoitu data
   assets/         logo ja kattokartta
   vendor/         qrcode-generator (MIT)
