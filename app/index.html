@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="fi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VILPE Sense+</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__inner">
+      <a class="brand" href="#/salkku" aria-label="VILPE Sense+ etusivu">
+        <img src="assets/vilpe-logo.png" alt="VILPE" class="brand__logo">
+        <span class="brand__product">Sense<b>+</b></span>
+      </a>
+      <nav class="nav" id="nav">
+        <a href="#/salkku" data-view="salkku">Salkku</a>
+        <a href="#/kohde" data-view="kohde">Kohde</a>
+        <a href="#/passi" data-view="passi">Kosteuspassi</a>
+        <a href="#/vakuuttaja" data-view="vakuuttaja">Vakuuttaja</a>
+        <a href="#/raportti" data-view="raportti">Hallitusraportti</a>
+        <a href="#/malli" data-view="malli">Liiketoiminta</a>
+      </nav>
+      <div class="user" id="user"></div>
+    </div>
+  </header>
+
+  <main id="view" class="view" tabindex="-1"></main>
+
+  <footer class="footer">
+    <div class="footer__inner">
+      <span>VILPE Sense+ · prototyyppi · VILPE x Vaasa Hackathon 2026</span>
+      <span>Kohteen VILPE Express Store, Vantaa data on oikeaa (9/2025–9/2026). Muut kohteet ja kumppanit ovat kuvitteellisia.</span>
+      <button class="link-button" id="reset">Nollaa demo</button>
+    </div>
+  </footer>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal__backdrop" data-close></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="modal-title"></div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="vendor/qrcode.js"></script>
+  <script src="data.js"></script>
+  <script src="charts.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
