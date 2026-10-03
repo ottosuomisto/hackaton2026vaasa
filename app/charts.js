@@ -118,7 +118,8 @@
     (opts.markers || []).forEach((mk) => {
       const px = x(mk.index);
       el("line", { x1: px, x2: px, y1: m.t, y2: m.t + ih, stroke: mk.color, "stroke-width": 1.5, "stroke-dasharray": "4 3" }, svg);
-      const t = el("text", { x: px + 5, y: m.t + 10, style: `fill:${mk.color};font-weight:700` }, svg);
+      const nearRight = px > m.l + iw * 0.7;
+      const t = el("text", { x: nearRight ? px - 5 : px + 5, y: m.t + (opts.bands && opts.bands.some((bd) => bd.label) ? 26 : 10), "text-anchor": nearRight ? "end" : "start", style: `fill:${mk.color};font-weight:700` }, svg);
       t.textContent = mk.label;
     });
 

@@ -164,6 +164,7 @@
     const monthly = site.networkMonthly;
     const firstMonth = monthly[0];
     const driest = monthly.reduce((a, b) => (b.rh < a.rh ? b : a));
+    const wettest = monthly.reduce((a, b) => (b.rh > a.rh ? b : a));
     const lastMonth = monthly[monthly.length - 1];
     const rhNow = sensors.length ? avg(sensors.filter((s) => !offline.includes(s)).map((s) => s.last.rh)) : avg(units.map((u) => u.days[u.days.length - 1].rhIn));
 
@@ -192,7 +193,7 @@
       anomalies, offline, stopped, maxMold, riskUnit,
       othersTMin: others.length ? Math.min(...others.map((s) => s.tMin)) : null,
       othersRhMax: others.length ? Math.max(...others.map((s) => s.rhMax)) : null,
-      firstMonth, driest, lastMonth, rhNow, safeShare, safeLabel, overShare,
+      firstMonth, driest, wettest, lastMonth, rhNow, safeShare, safeLabel, overShare,
       fanUptime: units.length ? avg(units.map((u) => u.on)) : null,
       sensorAvailability: sensors.length ? (100 * sensorDays) / (sensors.length * days.length) : null,
       measurements: site.real ? sensors.reduce((a, s) => a + s.n, 0) : sensors.reduce((a, s) => a + s.n, 0) + units.length * days.length * 12,
@@ -295,7 +296,7 @@
         kind: "info",
         level: "ok",
         title: actionableCount ? "Kosteustaso muuten normaali" : "Kosteustaso on normaali",
-        text: `Rakenteen kosteus ${n1(A.firstMonth.rh)} % → ${n1(A.lastMonth.rh)} % (${monthShort(A.firstMonth.m)}–${monthShort(A.lastMonth.m)}). Nousu seuraa ulkoilman syksyistä kosteutta.`,
+        text: `Rakenteen kosteus vaihteli kuukausitasolla ${n1(A.driest.rh)}–${n1(A.wettest.rh)} % (${monthShort(A.firstMonth.m)}–${monthShort(A.lastMonth.m)}). Vaihtelu seuraa vuodenaikoja eikä yllä kriittisiin lukemiin.`,
         evidence: `${pct(A.safeShare)} % ${A.safeLabel}.`,
       });
     }
@@ -464,7 +465,7 @@
         <div class="form-row"><label for="s-sensors">Vuotoanturit (RHT-2)</label><input id="s-sensors" type="number" min="0" max="80" value="20"></div>
         <div class="form-row"><label for="s-units">Kosteudenhallinta (MCU-2 + imuri)</label><input id="s-units" type="number" min="0" max="10" value="1"></div>
         <div class="form-row"><label for="s-apts">Asuntoja</label><input id="s-apts" type="number" min="0" max="400" value="24"></div>
-        <div class="form-row"><span class="label"></span><p class="muted" style="font-size:13px">Demossa uuden kohteen data simuloidaan 3 kuukauden ajalta valitulla laitekombolla.</p></div>
+        <div class="form-row"><span class="label"></span><p class="muted" style="font-size:13px">Demossa uuden kohteen data simuloidaan 12 kuukauden ajalta valitulla laitekombolla.</p></div>
         <p class="login__error" id="site-error" role="alert" hidden></p>
       </form>
       <div class="modal__foot">
@@ -958,7 +959,7 @@
     const url = `https://sense.vilpe.com/passi/${passId}`;
     const items = [];
     if (site.newBuild) items.push(["ok", `Rakennuskosteus kuivunut: katon RH ${n1(A.firstMonth.rh)} % → ${n1(A.driest.rh)} % (${monthShort(A.driest.m)})`]);
-    else items.push(["ok", `Rakenteen kosteus normaalilla tasolla: ${n1(A.firstMonth.rh)} % → ${n1(A.lastMonth.rh)} % (kk-ka.)`]);
+    else items.push(["ok", `Rakenteen kosteus normaalilla tasolla: ${n1(A.driest.rh)}–${n1(A.wettest.rh)} % (kk-ka.), vaihtelu seuraa vuodenaikoja`]);
     if (A.maxMold !== null) items.push(["ok", `Homeindeksi enintään ${n1(A.maxMold)} (hälytysraja 2,5)${A.riskUnit && A.riskUnit.mold > 0.3 ? ` – ${A.riskUnit.name.toLowerCase()} seurannassa` : ""}`]);
     items.push(["ok", `${pct(A.safeShare)} % ${A.safeLabel}`]);
     fs.forEach((f) => {
@@ -1222,7 +1223,7 @@
             <h2>Kauden tärkeimmät havainnot</h2>
             <ul class="checklist">
               ${act.map((f) => `<li><span class="${f.state.status === "resolved" ? "ok" : "warn"}">${f.state.status === "resolved" ? "✔" : "⚠"}</span><span>${f.plain}${f.state.status === "resolved" ? " Korjattu." : ""}</span></li>`).join("")}
-              ${site.newBuild ? `<li><span class="ok">✔</span><span>Rakennuskosteus on kuivunut: katon kosteus laski ${n0(A.firstMonth.rh)} %:sta ${n0(A.driest.rh)} %:iin.</span></li>` : `<li><span class="ok">✔</span><span>Rakenteen kosteustaso on normaali (${n0(A.firstMonth.rh)} → ${n0(A.lastMonth.rh)} %, nousu seuraa syksyn ulkoilmaa).</span></li>`}
+              ${site.newBuild ? `<li><span class="ok">✔</span><span>Rakennuskosteus on kuivunut: katon kosteus laski ${n0(A.firstMonth.rh)} %:sta ${n0(A.driest.rh)} %:iin.</span></li>` : `<li><span class="ok">✔</span><span>Rakenteen kosteustaso on normaali (kuukausikeskiarvot ${n0(A.driest.rh)}–${n0(A.wettest.rh)} %, vaihtelu seuraa vuodenaikoja).</span></li>`}
               ${A.maxMold !== null ? `<li><span class="ok">✔</span><span>Homeriski on matala (suurin homeindeksi ${n1(A.maxMold)}, hälytysraja 2,5).</span></li>` : ""}
             </ul>
           </section>

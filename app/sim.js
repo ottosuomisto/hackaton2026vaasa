@@ -5,8 +5,8 @@
 (function () {
   "use strict";
 
-  const SIM_END = "2026-10-02";
-  const SIM_DAYS = 92;
+  const SIM_END = "2026-09-30";
+  const SIM_DAYS = 365;
 
   function rng(seedStr) {
     let h = 1779033703 ^ seedStr.length;
@@ -74,10 +74,13 @@
     const n = days.length;
     const ev = cfg.events || {};
 
-    // Ulkoilma: Pohjanmaan loppukesä → syksy
     const rain = days.map(() => rand() < 0.32);
-    const tOut = days.map((_, i) => r1(17.5 - (i / n) * 10 + noise(2.6)));
-    const rhOut = days.map((_, i) => r1(clamp(68 + (i / n) * 20 + (rain[i] ? 10 : 0) + noise(6), 40, 100)));
+    // Vuodenaikavaihtelu (Vaasa): heinäkuu ~+17 °C, tammikuu ~−7 °C; ulkoilma kosteinta syksyllä ja talvella
+    const doy = days.map((d) => (Date.parse(`${d}T12:00:00Z`) - Date.parse(`${d.slice(0, 4)}-01-01T00:00:00Z`)) / 864e5);
+    const season = (i, peakDay) => Math.cos((2 * Math.PI * (doy[i] - peakDay)) / 365);
+    let weather = 0;
+    const tOut = days.map((_, i) => { weather = weather * 0.7 + noise(3.2); return r1(5 + 12 * season(i, 200) + weather); });
+    const rhOut = days.map((_, i) => r1(clamp(80 + 11 * season(i, 340) + (rain[i] ? 9 : 0) + noise(6), 40, 100)));
 
     // Vuotoanturit (RHT-2)
     const sensorPos = gridPositions(cfg.sensors, rand);
@@ -91,7 +94,7 @@
       days.forEach((_, i) => {
         if (ev.offline && ev.offline.sensor === k && i >= n - ev.offline.days) { rh.push(null); t.push(null); return; }
         if (ev.leak && ev.leak.sensor === k && i >= ev.leak.from) leak = clamp(leak * 0.9 + (rain[i] ? 9 + rand() * 6 : 0), 0, 48);
-        rh.push(r1(clamp(base + (i / n) * 9 + (rain[i] ? 1.5 : 0) + leak + noise(1.6), 15, 99)));
+        rh.push(r1(clamp(base + 9 * season(i, 225) + (rain[i] ? 1.5 : 0) + leak + noise(1.6), 15, 99)));
         t.push(r1(tOut[i] * 0.45 + 10.5 + tBias + noise(0.6) - (leak ? 1.2 : 0)));
       });
       const valid = rh.map((v, i) => [v, t[i], i]).filter(([v]) => v !== null);
@@ -119,12 +122,14 @@
       const dd = days.map((d, i) => {
         const stopped = ev.fanStop && ev.fanStop.unit === k && i >= ev.fanStop.from;
         const tIn = r1(tOut[i] * 0.6 + 7 + noise(0.8));
-        const target = base + (i / n) * 10 + (stopped ? 18 : 0);
+        const target = base + 8 * season(i, 320) + (stopped ? 18 : 0);
         rhState = rhState * 0.7 + target * 0.3;
         const rhIn = r1(clamp(rhState + noise(2.5), 30, 99));
         const ahIn = ah(tIn, rhIn);
         const ahO = ah(tOut[i], rhOut[i]);
-        const on = stopped ? 0 : clamp(Math.round((ahIn > ahO ? 92 : 55) + noise(8)), 0, 100);
+        // Kovalla pakkasella ohjaus pysäyttää puhaltimen (pakkassuojaus)
+        const frost = tOut[i] < -10;
+        const on = stopped || frost ? 0 : clamp(Math.round((ahIn > ahO ? 92 : 55) + noise(8)), 0, 100);
         const rpm = stopped ? 0 : Math.round((on / 100) * (1100 + rand() * 600));
         return { d, rpm, on, tIn, rhIn, ahIn, tOut: tOut[i], rhOut: rhOut[i], ahOut: ahO };
       });
@@ -145,7 +150,7 @@
         name,
         serial: serial(rand, "N1"),
         purpose: cfg.type === "Ryömintätilainen alapohja" ? "Ryömintätilan tuuletus" : cfg.type.includes("peltikatto") || cfg.type.includes("Ullakollinen") ? "Ullakon kosteudenhallinta" : "Kattorakenteen tuuletus",
-        mold: Math.round((humid * 0.004 + rand() * 0.004) * 100000) / 100000,
+        mold: Math.round((humid * 0.0025 + rand() * 0.004) * 100000) / 100000,
         rpmLast: dd[n - 1].rpm,
         pos,
         on: Math.round(avg(dd.map((x) => x.on))),
@@ -191,7 +196,7 @@
       units,
       networkMonthly,
       roof: { w: W, h: H, src: roofSvg(cfg.type, W, H) },
-      events: cfg.storyEvents || [],
+      events: (cfg.storyEvents || []).map((e) => ({ ...e, d: e.d || days[0] })),
     };
   }
 
@@ -206,8 +211,8 @@
       apartments: 30,
       sensors: 28,
       units: 0,
-      events: { leak: { sensor: 17, from: 58 } },
-      storyEvents: [{ d: "2026-07-03", cls: "info", t: "Sense-vuotopaikannin (28 × RHT-2) liitetty Sense+ Careen" }],
+      events: { leak: { sensor: 17, from: SIM_DAYS - 34 } },
+      storyEvents: [{ d: null, cls: "info", t: "Sense-vuotopaikannin (28 × RHT-2) liitetty Sense+ Careen" }],
     },
     {
       id: "hietalahdenkatu",
@@ -219,8 +224,8 @@
       sensors: 0,
       units: 3,
       unitNames: ["Ullakko A", "Ullakko B", "Ullakko C"],
-      events: { fanStop: { unit: 1, from: 69 } },
-      storyEvents: [{ d: "2026-07-03", cls: "info", t: "Kosteudenhallinta (3 × MCU-2 + EC-huippuimuri) liitetty Sense+ Careen" }],
+      events: { fanStop: { unit: 1, from: SIM_DAYS - 21 } },
+      storyEvents: [{ d: null, cls: "info", t: "Kosteudenhallinta (3 × MCU-2 + EC-huippuimuri) liitetty Sense+ Careen" }],
     },
     {
       id: "palosaari",
@@ -233,7 +238,7 @@
       units: 2,
       unitNames: ["Viherkatto itä", "Viherkatto länsi"],
       events: { offline: { sensor: 5, days: 4 } },
-      storyEvents: [{ d: "2026-07-03", cls: "info", t: "Vuotoanturit (16 × RHT-2) ja 2 × MCU-2 liitetty Sense+ Careen" }],
+      storyEvents: [{ d: null, cls: "info", t: "Vuotoanturit (16 × RHT-2) ja 2 × MCU-2 liitetty Sense+ Careen" }],
     },
   ];
 

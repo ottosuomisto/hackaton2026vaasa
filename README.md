@@ -9,9 +9,9 @@ Salkussa on neljä kohdetta:
 | Kohde | Data | Laitekombo |
 |---|---|---|
 | VILPE Express Store, Vantaa | **Oikea** (9/2025–9/2026) | 51 vuotoanturia + 7 huippuimuria |
-| As Oy Vaasan Rantakatu 12 | Simuloitu (3 kk) | 28 vuotoanturia – vuotoepäily |
-| As Oy Hietalahdenkatu 5 | Simuloitu (3 kk) | 3 × MCU-2 + huippuimuri – puhallin seis |
-| As Oy Palosaaren Helmi | Simuloitu (3 kk) | 16 vuotoanturia + 2 huippuimuria – anturi offline |
+| As Oy Vaasan Rantakatu 12 | Simuloitu (12 kk) | 28 vuotoanturia – vuotoepäily |
+| As Oy Hietalahdenkatu 5 | Simuloitu (12 kk) | 3 × MCU-2 + huippuimuri – puhallin seis |
+| As Oy Palosaaren Helmi | Simuloitu (12 kk) | 16 vuotoanturia + 2 huippuimuria – anturi offline |
 
 ## Kirjautuminen
 
@@ -36,7 +36,7 @@ node scripts/serve.js
 
 | Näkymä | Mitä näyttää |
 |---|---|
-| **Salkku** | Kohteet Health Scoren mukaan järjestettynä. **Lisää kohde** (nimi, rakenne, laitekombo → 3 kk simuloitu data) ja **Poista** kohde |
+| **Salkku** | Kohteet Health Scoren mukaan järjestettynä. **Lisää kohde** (nimi, rakenne, laitekombo → 12 kk simuloitu data) ja **Poista** kohde |
 | **Kohde** | Kosteuskartta (päiväliukusäädin + toisto), toimenpidelista, huippuimurien tila ja aikasarjat, kuivumiskäyrä |
 | **Työtilaus** | Yhden klikkauksen tilaus kumppaniurakoitsijalle → "Merkitse korjatuksi" → Health Score päivittyy |
 | **Kosteuspassi** | Luokka A–E, havainnot, kuivumiskäyrä, mittauskattavuus, QR-varmennus, tulostus/PDF |
