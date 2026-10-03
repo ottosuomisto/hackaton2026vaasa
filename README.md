@@ -57,9 +57,13 @@ Profiilit: Suomi, Ruotsi, Viro, Latvia, Liettua, Puola, Iso-Britannia ja USA (`a
 | **Kosteuspassi** | Luokka A–E, havainnot, kuivumiskäyrä, mittauskattavuus, QR-varmennus, tulostus/PDF |
 | **Vakuutusnäkymä** | Suostumus (peruttavissa), riskiluokka, alennusperuste, toimenpidehistoria, Health Score -erittely |
 | **Hallitusraportti** | Yhden sivun vuosikooste yhtiökokoukseen |
-| **Liiketoiminta** | Elinkaari, paketit maan hinnoilla, maaprofiili (roolit, säädöskytkentä), laajenemisjärjestys, kustannuslaskuri, VILPEn tuloskenaario |
+| **Liiketoiminta** | Elinkaari, paketit maan hinnoilla, maaprofiili (roolit, säädöskytkentä), laajenemisjärjestys, kustannuslaskuri, VILPEn tuloskenaario, VILPEn hinnasto 2025 ja Vantaan laitteistolaskelma |
 
 Kohdekohtaisissa näkymissä on kohdevalitsin. Demon tila (tilaukset, korjaukset, suostumukset, lisätyt ja poistetut kohteet) tallentuu selaimen localStorageen. Footerin **Nollaa demo** palauttaa alkutilan.
+
+## Hinnat
+
+Laitteiston hinnat lasketaan VILPEn hinnastosta 2025 (alv 0 %): vuotopaikannin 10 kpl 580 € (735045), mobiilitukiasema 695 € (735044), Sense-paketti MCU-2 + 2 anturia 1 115 € (735040), lisäanturi 181,50 € (735041) ja ECo Sense -huippuimuri 522 € (741982). Anturit myydään 10 kpl paketteina, ja yksi tukiasema riittää 200 anturille ja 50 ohjausyksikölle. Laitteisto palveluna = (laitteisto + Croco-kiinnikkeet ja asennus ~1 000 €) / 120 kk × 1,05 + Care Pro 30 €/kk. Esimerkiksi 800 m² ja 30 asuntoa → ~65 €/kk ≈ 2,17 €/asunto. Muissa maissa laitteisto muunnetaan valuuttakurssilla ja palvelu maakertoimella.
 
 ## Analytiikka (sääntöpohjainen MVP)
 

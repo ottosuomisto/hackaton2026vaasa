@@ -78,6 +78,28 @@
   const scaleCss = (s) => `linear-gradient(90deg, ${s.stops.map(([v, c]) => `${c} ${((v - s.min) / (s.max - s.min)) * 100}%`).join(", ")})`;
   const scaleLabel = (key) => (key === "rh" ? `${L("Suhteellinen kosteus", "Relative humidity")} 20…92 %` : `${L("Lämpötila", "Temperature")} ${n0(I.temp(-5))}…${n0(I.temp(25))} ${I.tempUnit()}`);
 
+  // ---------- VILPEn hinnasto 2025 (alv 0 %, konsepti luku 3.3) ----------
+  const PRICE_LIST = {
+    leakPack: { no: "735045", eur: 580, fi: "VILPE Sense -vuotopaikannin, 10 kpl (RHT-2)", en: "VILPE Sense leak detector, 10 pcs (RHT-2)" },
+    ccu: { no: "735044", eur: 695, fi: "VILPE Sense -mobiilitukiasema (CCU)", en: "VILPE Sense mobile base station (CCU)" },
+    mcuPack: { no: "735040", eur: 1115, fi: "VILPE Sense -paketti (MCU-2 + 2 anturia)", en: "VILPE Sense package (MCU-2 + 2 sensors)" },
+    extraSensor: { no: "735041", eur: 181.5, fi: "VILPE Sense -lisäanturi (kosteudenhallinta)", en: "VILPE Sense extra sensor (humidity control)" },
+    fan: { no: "741982", eur: 522, fi: "VILPE ECo Sense -huippuimuri", en: "VILPE ECo Sense roof fan" },
+  };
+  const INSTALL_EUR = 1000; // Croco-kiinnikkeet ja asennus, arvio
+  const CARE_PRO_EUR = 30; // Care Pro €/kk HaaS-paketissa
+  // Laitteisto hinnaston mukaan: anturit 10 kpl paketteina, yksi tukiasema per 200 anturia / 50 MCU-2
+  function hardware(sensors, units) {
+    const packs = Math.ceil(sensors / 10);
+    const ccus = sensors + units ? Math.max(1, Math.ceil(sensors / 200), Math.ceil(units / 50)) : 0;
+    const leak = packs * PRICE_LIST.leakPack.eur + ccus * PRICE_LIST.ccu.eur;
+    const humidity = units * (PRICE_LIST.mcuPack.eur + PRICE_LIST.fan.eur);
+    const total = leak + humidity;
+    // Laitteisto palveluna: 10 v kuoletus + marginaali, Care Pro päälle
+    const haas = ((total + INSTALL_EUR) / 120) * 1.05;
+    return { packs, ccus, leak, humidity, total, haas };
+  }
+
   // ---------- Tila (demon kulku) ----------
   const STORE = "vilpe-senseplus-demo-v2";
   const fresh = () => ({ findings: {}, consent: {}, orders: 0, removed: [], custom: [], current: "vantaa" });
@@ -248,7 +270,7 @@
         evidence: L(`Sääntö: rpm = 0 yli 48 h (pakkaspäiviä alle ${tmp(-5)} ei lasketa) ja sisä-AH > ulko-AH → tuuletus olisi kannattanut ${u.ventLost} päivänä. Sense+ olisi hälyttänyt ${fdate(u.alertDay)}.`,
           `Rule: rpm = 0 for over 48 h (frost days below ${tmp(-5)} excluded) and indoor AH > outdoor AH → ventilation would have helped on ${u.ventLost} days. Sense+ would have alerted on ${fdate(u.alertDay)}.`),
         plain: L(`Huippuimuri (${n}) ei käynyt ${n0(u.stopDays)} vuorokauteen, ja rakenteen kosteus nousi ${n0(u.stopPeak)} %:iin.`, `A roof fan (${n}) did not run for ${n0(u.stopDays)} days, and structural humidity rose to ${n0(u.stopPeak)} %.`),
-        pts: L(`${n}: puhaltimen huolto, vaihto jos vika toistuu (~${I.price(600)}).`, `${n}: fan service, replace if the fault recurs (~${I.price(600)}).`),
+        pts: L(`${n}: puhaltimen huolto, vaihto jos vika toistuu (ECo Sense ${I.money(PRICE_LIST.fan.eur)}).`, `${n}: fan service, replace if the fault recurs (ECo Sense ${I.money(PRICE_LIST.fan.eur)}).`),
         passOpen: L(`1 kosteudenhallintayksikkö (${n}) ei toiminut ${n0(u.stopDays)} vrk`, `1 humidity control unit (${n}) out of action for ${n0(u.stopDays)} days`),
         passDone: L(`${n}: puhallin seis ${n0(u.stopDays)} vrk – huollettu`, `${n}: fan stopped ${n0(u.stopDays)} days – serviced`),
         action: L("Tilaa huolto", "Order service"),
@@ -267,7 +289,7 @@
         text: L(`Viimeisin mittaus ${fdate(s.last.ts)}. Anturi lähettää normaalisti kaksi kertaa vuorokaudessa, joten tämä katon alue on nyt valvonnan ulkopuolella.`, `Last reading ${fdate(s.last.ts)}. The sensor normally reports twice a day, so this part of the roof is currently unmonitored.`),
         evidence: L("Sääntö: ei mittausta yli 36 h. Todennäköinen syy: yhteyskatko tukiasemaan tai anturivika (akku mitoitettu 15 vuodelle).", "Rule: no reading for over 36 h. Likely cause: lost connection to the base station or a sensor fault (battery rated for 15 years)."),
         plain: L(`Yksi vuotoanturi (${s.id}) lakkasi lähettämästä dataa, joten osa katosta on valvonnan ulkopuolella.`, `One leak sensor (${s.id}) stopped reporting, so part of the roof is unmonitored.`),
-        pts: L(`Anturin ${s.id} tarkistus tai vaihto (~${I.price(145)}).`, `Check or replace sensor ${s.id} (~${I.price(145)}).`),
+        pts: L(`Anturin ${s.id} tarkistus tai vaihto (${I.money(PRICE_LIST.leakPack.eur / 10)}/${L("anturi", "sensor")}).`, `Check or replace sensor ${s.id} (${I.money(PRICE_LIST.leakPack.eur / 10)} per sensor).`),
         passOpen: L(`1 anturi (${s.id}) ilman yhteyttä ${s.offlineDays} vrk`, `1 sensor (${s.id}) offline for ${s.offlineDays} days`),
         passDone: L(`Anturi ${s.id}: yhteys palautettu`, `Sensor ${s.id}: connection restored`),
         action: L("Tilaa huolto", "Order service"),
@@ -1242,8 +1264,8 @@
     const act = fs.filter((f) => f.action);
     const done = act.filter((f) => f.state.status !== "open");
     const open = openCount(site);
-    const hw = A.sensors.length * 145 + A.units.length * 1100 + 1000;
-    const monthly = hw / 120 + 30;
+    const hwc = hardware(A.sensors.length, A.units.length);
+    const monthly = hwc.haas + CARE_PRO_EUR * P.mult;
     const pts = [...fs.filter((f) => f.pts && f.state.status !== "resolved").map((f) => f.pts), L("Uusi Kosteuspassi 12 kk kuluttua tai ennen myyntiä / vakuutuksen uusintaa.", "New Moisture Passport in 12 months or before a sale / insurance renewal.")];
     const y0 = A.days[0].slice(0, 4);
     const y1 = A.days[A.lastIdx].slice(0, 4);
@@ -1293,10 +1315,11 @@
             <div>
               <h2>${L("Kustannus ja hyöty", "Cost and benefit")}</h2>
               <div class="facts" style="grid-template-columns:1fr 1fr">
-                <div><b>~${I.price(monthly)}/${L("kk", "mo")}</b><span>${L("Care Pro + laitteisto palveluna", "Care Pro + hardware as a service")}</span></div>
-                <div><b>${site.apartments ? I.price(monthly / site.apartments, 2) : "–"}</b><span>${site.apartments ? L(`per ${I.pick(P.unitWord)} kuukaudessa (${site.apartments} kpl)`, `per ${I.pick(P.unitWord)} per month (${site.apartments})`) : L("liikekiinteistö", "commercial property")}</span></div>
+                <div><b>~${I.money(monthly)}/${L("kk", "mo")}</b><span>${L("Care Pro + laitteisto palveluna", "Care Pro + hardware as a service")}</span></div>
+                <div><b>${site.apartments ? I.money(monthly / site.apartments, 2) : "–"}</b><span>${site.apartments ? L(`per ${I.pick(P.unitWord)} kuukaudessa (${site.apartments} kpl)`, `per ${I.pick(P.unitWord)} per month (${site.apartments})`) : L("liikekiinteistö", "commercial property")}</span></div>
                 <div><b>&gt; ${I.money(5000)}</b><span>${L("yksi vältetty kattovuoto", "one avoided roof leak")}</span></div>
                 <div><b>5–10 %</b><span>${L("vakuutusalennus datan perusteella", "insurance discount based on data")}</span></div>
+                <div style="grid-column:1/-1"><b>${I.money(hwc.total)}</b><span>${L("laitteisto VILPEn hinnaston mukaan (alv 0 %)", "hardware at VILPE list prices (excl. VAT)")}${hwc.leak && hwc.humidity ? ` · ${L("vuotovalvonta", "leak detection")} ${I.money(hwc.leak)} + ${L("kosteudenhallinta", "humidity control")} ${I.money(hwc.humidity)}` : ""}</span></div>
               </div>
               <p class="muted" style="font-size:12px;margin-top:8px">${L("Raportin vastaanottaja", "Report recipient")}: ${esc(I.role("owner"))}</p>
             </div>
@@ -1388,7 +1411,7 @@
           <label for="c-ins">${L("Kiinteistövakuutus", "Property insurance")}: <span id="c-ins-v"></span> /${L("v", "yr")}</label>
           <input type="range" id="c-ins" min="1000" max="20000" step="500" value="6000">
           <div class="calc__out" id="c-out"></div>
-          <p class="muted" style="font-size:12px;margin-top:10px">${L(`~10 anturia / ${n0(I.area(200))} ${I.areaUnit()}, tukiasema ja asennus, kuoletus 10 v, Care Pro HaaS-paketissa, vakuutusetu 5–10 %. Hinnat maakertoimella.`, `~10 sensors per ${n0(I.area(200))} ${I.areaUnit()}, base station and installation, 10-year amortisation, Care Pro in the HaaS bundle, insurance benefit 5–10 %. Prices include the country multiplier.`)}</p>
+          <p class="muted" style="font-size:12px;margin-top:10px">${L(`~10 anturia / ${n0(I.area(200))} ${I.areaUnit()} (10 kpl paketti ${I.money(580)}), tukiasema ${I.money(695)}, Croco-kiinnikkeet ja asennus ~${I.money(INSTALL_EUR)}, kuoletus 10 v + marginaali, Care Pro ${I.price(CARE_PRO_EUR)}/kk HaaS-paketissa, vakuutusetu 5–10 %. Laitteisto VILPEn hinnaston mukaan (alv 0 %), palvelu maakertoimella.`, `~10 sensors per ${n0(I.area(200))} ${I.areaUnit()} (10-pack ${I.money(580)}), base station ${I.money(695)}, Croco fixings and installation ~${I.money(INSTALL_EUR)}, 10-year amortisation + margin, Care Pro ${I.price(CARE_PRO_EUR)}/mo in the HaaS bundle, insurance benefit 5–10 %. Hardware at VILPE list prices (excl. VAT), service with the country multiplier.`)}</p>
         </section>
         <section class="card">
           <div class="card__head"><h2>${L("VILPEn esimerkkiskenaario", "VILPE example scenario")}</h2><span class="caps">${L("havainnollistava · EUR", "illustrative · EUR")}</span></div>
@@ -1403,6 +1426,35 @@
           <p class="muted" style="font-size:13px;margin-top:12px">${L("Oletukset: Care ~900 €/kohde/v, passi ~400 €, vakuutus ~75 €/kohde/v. Lisäksi kasvava laite- ja lisämyynti (huippuimurit, läpiviennit).", "Assumptions: Care ~€900 per site per year, passport ~€400, insurance ~€75 per site per year. Plus growing device and add-on sales (roof fans, penetrations).")}</p>
           <p class="quote" style="margin-top:18px">${L("Kertamyynnistä toistuvaan tuloon ja suoraan asiakassuhteeseen.", "From one-off sales to recurring revenue and a direct customer relationship.")}</p>
         </section>
+      </div>
+
+      <div class="grid grid--2" style="margin-top:20px">
+        <section class="card">
+          <div class="card__head"><h2>${L("VILPEn hinnasto 2025", "VILPE price list 2025")}</h2><span class="caps">${L("alv 0 %", "excl. VAT")}${I.profile().currency !== "EUR" ? ` · ${L("muunnettu", "converted")} ${I.profile().currency}` : ""}</span></div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>${L("Tuote", "Product")}</th><th>${L("Tuotenro", "Product no.")}</th><th class="r">${L("Hinta", "Price")}</th></tr></thead>
+            <tbody>${Object.values(PRICE_LIST).map((p) => `<tr><td>${esc(L(p.fi, p.en))}</td><td class="num">${p.no}</td><td class="r num">${I.money(p.eur, p.eur % 1 ? 2 : 0)}</td></tr>`).join("")}</tbody>
+          </table></div>
+          <ul class="checklist" style="font-size:14px;margin-top:14px">
+            <li><span>▸</span><span>${L(`Vuotovalvonta: ${I.money(58)} / ${n0(I.area(20))} ${I.areaUnit()} eli ~${I.money(PRICE_LIST.leakPack.eur / 10 / I.area(20), 1)}/${I.areaUnit()} + tukiasema (riittää 200 anturille ja 50 ohjausyksikölle).`, `Leak detection: ${I.money(58)} per ${n0(I.area(20))} ${I.areaUnit()}, i.e. ~${I.money(PRICE_LIST.leakPack.eur / 10 / I.area(20), 1)}/${I.areaUnit()} + base station (serves 200 sensors and 50 control units).`)}</span></li>
+            <li><span>▸</span><span>${L(`Kosteudenhallinta: Sense-paketti + ECo Sense -huippuimuri = ${I.money(PRICE_LIST.mcuPack.eur + PRICE_LIST.fan.eur)} per imuri.`, `Humidity control: Sense package + ECo Sense roof fan = ${I.money(PRICE_LIST.mcuPack.eur + PRICE_LIST.fan.eur)} per fan.`)}</span></li>
+            <li><span>▸</span><span class="muted">${L("Croco-kiinnikkeet myydään erikseen.", "Croco fixings are sold separately.")}</span></li>
+          </ul>
+        </section>
+        <section class="card">
+          <div class="card__head"><h2>${L("Esimerkki: Vantaan kohde", "Example: the Vantaa site")}</h2><span class="caps">${L("hinnaston mukaan", "at list prices")}</span></div>
+          ${(() => {
+            const v = hardware(51, 7);
+            return `<table><tbody>
+              <tr><td>${L(`Vuotoanturit: ${v.packs} × 10 kpl (51 asennettu)`, `Leak sensors: ${v.packs} × 10 pcs (51 installed)`)}</td><td class="r num">${I.money(v.packs * PRICE_LIST.leakPack.eur)}</td></tr>
+              <tr><td>${L("Mobiilitukiasema", "Mobile base station")}</td><td class="r num">${I.money(v.ccus * PRICE_LIST.ccu.eur)}</td></tr>
+              <tr><td><b>${L("Vuotovalvonta yhteensä", "Leak detection total")}</b></td><td class="r num"><b>${I.money(v.leak)}</b></td></tr>
+              <tr><td>${L(`Kosteudenhallinta: 7 × (${I.money(PRICE_LIST.mcuPack.eur)} + ${I.money(PRICE_LIST.fan.eur)})`, `Humidity control: 7 × (${I.money(PRICE_LIST.mcuPack.eur)} + ${I.money(PRICE_LIST.fan.eur)})`)}</td><td class="r num">${I.money(v.humidity)}</td></tr>
+              <tr><td><b>${L("Koko järjestelmä", "Complete system")}</b></td><td class="r num"><b>${I.money(v.total)}</b></td></tr>
+            </tbody></table>`;
+          })()}
+          <p class="quote" style="margin-top:18px">${L(`Koko vuotovalvonta ${I.money(hardware(51, 0).leak)} – VILPEn tehtaan yksi vuoto säästi ${I.money(45000)}.`, `Complete leak detection ${I.money(hardware(51, 0).leak)} – a single leak at VILPE's factory saved ${I.money(45000)}.`)}</p>
+        </section>
       </div>`;
     const calc = () => {
       const area = +$("#c-area").value;
@@ -1412,12 +1464,12 @@
       $("#c-apts-v").textContent = apts;
       $("#c-ins-v").textContent = I.money(ins);
       const sensors = Math.ceil((area / 200) * 10);
-      const hw = sensors * 145 + 1000;
-      const monthly = hw / 120 + 30;
+      const hwc = hardware(sensors, 0);
+      const monthly = hwc.haas + CARE_PRO_EUR * P.mult;
       $("#c-out").innerHTML = `
-        <div><b class="num">${sensors}</b><span>${L("anturia", "sensors")} · ${L("laitteisto", "hardware")} ~${I.price(hw)}</span></div>
-        <div><b class="num">${I.price(monthly)}/${L("kk", "mo")}</b><span>${L("vakuutusetu", "insurance benefit")} −${I.money(ins * 0.075)}/${L("v", "yr")}</span></div>
-        <div><b class="num">${I.price(monthly / apts, 2)}</b><span>${L(`per ${I.pick(P.unitWord)} kuukaudessa`, `per ${I.pick(P.unitWord)} per month`)}</span></div>`;
+        <div><b class="num">${sensors}</b><span>${L("anturia", "sensors")} · ${L("laitteisto", "hardware")} ${I.money(hwc.total + INSTALL_EUR)}</span></div>
+        <div><b class="num">${I.money(monthly)}/${L("kk", "mo")}</b><span>${L("vakuutusetu", "insurance benefit")} −${I.money(ins * 0.075)}/${L("v", "yr")}</span></div>
+        <div><b class="num">${I.money(monthly / apts, 2)}</b><span>${L(`per ${I.pick(P.unitWord)} kuukaudessa`, `per ${I.pick(P.unitWord)} per month`)}</span></div>`;
     };
     $$(".calc input").forEach((i) => i.addEventListener("input", calc));
     calc();
