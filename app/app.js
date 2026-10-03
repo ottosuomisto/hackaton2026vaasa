@@ -682,7 +682,7 @@
             <h1>${D.site.name}</h1>
             <p>${PASS_USES[passUse]}</p>
           </div>
-          <img src="assets/vilpe-logo.png" alt="VILPE">
+          <img src="assets/vilpe-logo.svg" alt="VILPE">
         </header>
         <div class="doc__body">
           <section class="doc__section">
@@ -887,7 +887,7 @@
             <h1>Katon kosteusturva 2025–2026</h1>
             <p>${D.site.name} · laatinut Sense+ automaattisesti ${TODAY}</p>
           </div>
-          <img src="assets/vilpe-logo.png" alt="VILPE">
+          <img src="assets/vilpe-logo.svg" alt="VILPE">
         </header>
         <div class="doc__body">
           <section class="doc__section" style="display:flex;gap:22px;align-items:center;flex-wrap:wrap">
